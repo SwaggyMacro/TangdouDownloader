@@ -53,13 +53,28 @@ namespace TangdouDownloader
         {
             VideoAPI videoAPI = new VideoAPI();
             var listCount = lvDownloadList.Items.Count;
+            string invalidUrl= String.Empty;
+            string errUrls = String.Empty;
             // first is number, second is name, third is status, fourth is progress, fifth is quality, sixth is download url, seventh is vid
             foreach (var url in urls)
             {
                 listCount++;
                 ListViewItem item = new ListViewItem(Convert.ToString(listCount));
                 Dictionary<string, object> vInfo;
-                vInfo = await videoAPI.GetVideoInfoAsync(url);
+                try
+                {
+                    vInfo = await videoAPI.GetVideoInfoAsync(url);
+                }
+                catch (UriFormatException)
+                {
+                    invalidUrl += url + "\r\n";
+                    continue;
+                }
+               catch
+                {
+                    errUrls += url + "\r\n";
+                    continue;
+                }
                 item.SubItems.Add(vInfo["name"].ToString());
                 item.SubItems.Add("等待中");
                 item.SubItems.Add("0%");
@@ -141,15 +156,32 @@ namespace TangdouDownloader
             }
             lvDownloadList.Refresh();
             ReverseBtnState();
+            if (!String.IsNullOrEmpty(invalidUrl))
+            {
+                MessageBox.Show(this, "以下链接格式不正确，已忽略：\r\n" + invalidUrl, "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            if (!String.IsNullOrEmpty(errUrls))
+            {
+                MessageBox.Show(this, "以下链接解析失败，已忽略：\r\n" + errUrls, "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
         }
         private void btnStartDownload_Click(object sender, EventArgs e)
         {
+            if (lvDownloadList.Items.Count == 0)
+            {
+                MessageBox.Show(this, "请先添加视频链接", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
             ReverseBtnState();
 
             Task.Run(() =>
             {
                 StartDownloads();
                 ReverseBtnState();
+                if (MessageBox.Show(this, $"视频下载完成，已保存至程序运行目录下Downloads文件夹({Application.StartupPath + "\\Downloads"})\n是否打开视频保存目录？", "提示", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
+                {
+                    System.Diagnostics.Process.Start("explorer.exe", Application.StartupPath + "\\Downloads");
+                }
             });
         }
 
