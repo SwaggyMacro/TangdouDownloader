@@ -267,7 +267,7 @@ namespace TangdouDownloader
 
         private void toolStripStatusLabel5_Click(object sender, EventArgs e)
         {
-            MessageBox.Show(this, "1. 在视频链接输入框内粘贴需要下载的视频地址或者VID（一行一个，回车换行）\n2. 选择清晰度（默认最高）\n3. 点击“添加”按钮添加至下载列表\n4. 点击“开始下载”按钮\n5. 下载完成后视频自动保存至软件的运行目录", "使用说明", MessageBoxButtons.OK);
+            MessageBox.Show(this, "1. 在视频链接输入框内粘贴需要下载的视频地址或者VID（一行一个，回车换行）\n2. 选择清晰度（默认最高）\n3. 点击“添加”按钮添加至下载列表\n4. 点击“开始下载”按钮\n5. 下载完成后视频自动保存至软件的运行目录", "使用说明", MessageBoxButtons.OK, MessageBoxIcon.Question);
         }
     }
 }
