@@ -58,21 +58,26 @@ namespace TangdouDownloader
             // first is number, second is name, third is status, fourth is progress, fifth is quality, sixth is download url, seventh is vid
             foreach (var url in urls)
             {
+                var _url = url;
                 listCount++;
                 ListViewItem item = new ListViewItem(Convert.ToString(listCount));
                 Dictionary<string, object> vInfo;
                 try
                 {
-                    vInfo = await videoAPI.GetVideoInfoAsync(url);
+                    if (_url.Length >= 11 && _url.All(char.IsDigit))
+                    {
+                        _url = "https://www.tangdouddn.com/h5/play?vid=" + _url;
+                    }
+                    vInfo = await videoAPI.GetVideoInfoAsync(_url);
                 }
                 catch (UriFormatException)
                 {
-                    invalidUrl += url + "\r\n";
+                    invalidUrl += _url + "\r\n";
                     continue;
                 }
                catch
                 {
-                    errUrls += url + "\r\n";
+                    errUrls += _url + "\r\n";
                     continue;
                 }
                 item.SubItems.Add(vInfo["name"].ToString());
@@ -151,7 +156,7 @@ namespace TangdouDownloader
                             item.SubItems.Add(vUrls["H360P"]);
                         break;
                 }
-                item.SubItems.Add(Utils.GetVid(url));
+                item.SubItems.Add(Utils.GetVid(_url));
                 lvDownloadList.Items.Add(item);
             }
             lvDownloadList.Refresh();
