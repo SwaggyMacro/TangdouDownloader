@@ -28,6 +28,7 @@
         /// </summary>
         private void InitializeComponent()
         {
+            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(Form1));
             this.lvDownloadList = new System.Windows.Forms.ListView();
             this.chId = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
             this.chName = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
@@ -47,9 +48,9 @@
             this.statusStrip1 = new System.Windows.Forms.StatusStrip();
             this.toolStripStatusLabel1 = new System.Windows.Forms.ToolStripStatusLabel();
             this.toolStripStatusLabel2 = new System.Windows.Forms.ToolStripStatusLabel();
+            this.toolStripStatusLabel5 = new System.Windows.Forms.ToolStripStatusLabel();
             this.toolStripStatusLabel3 = new System.Windows.Forms.ToolStripStatusLabel();
             this.toolStripStatusLabel4 = new System.Windows.Forms.ToolStripStatusLabel();
-            this.toolStripStatusLabel5 = new System.Windows.Forms.ToolStripStatusLabel();
             this.statusStrip1.SuspendLayout();
             this.SuspendLayout();
             // 
@@ -69,7 +70,7 @@
             this.lvDownloadList.HideSelection = false;
             this.lvDownloadList.Location = new System.Drawing.Point(1, 1);
             this.lvDownloadList.Name = "lvDownloadList";
-            this.lvDownloadList.Size = new System.Drawing.Size(792, 302);
+            this.lvDownloadList.Size = new System.Drawing.Size(829, 302);
             this.lvDownloadList.TabIndex = 0;
             this.lvDownloadList.UseCompatibleStateImageBehavior = false;
             this.lvDownloadList.View = System.Windows.Forms.View.Details;
@@ -86,6 +87,7 @@
             // chStatus
             // 
             this.chStatus.Text = "状态";
+            this.chStatus.Width = 80;
             // 
             // chProgress
             // 
@@ -103,7 +105,7 @@
             // chVID
             // 
             this.chVID.Text = "VID";
-            this.chVID.Width = 120;
+            this.chVID.Width = 150;
             // 
             // label1
             // 
@@ -122,7 +124,7 @@
             this.tbUrls.Multiline = true;
             this.tbUrls.Name = "tbUrls";
             this.tbUrls.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
-            this.tbUrls.Size = new System.Drawing.Size(714, 103);
+            this.tbUrls.Size = new System.Drawing.Size(751, 103);
             this.tbUrls.TabIndex = 2;
             // 
             // label2
@@ -156,7 +158,7 @@
             // btnAppend
             // 
             this.btnAppend.Font = new System.Drawing.Font("Microsoft YaHei UI", 9.75F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.btnAppend.Location = new System.Drawing.Point(474, 425);
+            this.btnAppend.Location = new System.Drawing.Point(513, 425);
             this.btnAppend.Name = "btnAppend";
             this.btnAppend.Size = new System.Drawing.Size(75, 29);
             this.btnAppend.TabIndex = 5;
@@ -167,7 +169,7 @@
             // btnStartDownload
             // 
             this.btnStartDownload.Font = new System.Drawing.Font("Microsoft YaHei UI", 9.75F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.btnStartDownload.Location = new System.Drawing.Point(717, 425);
+            this.btnStartDownload.Location = new System.Drawing.Point(756, 425);
             this.btnStartDownload.Name = "btnStartDownload";
             this.btnStartDownload.Size = new System.Drawing.Size(75, 29);
             this.btnStartDownload.TabIndex = 6;
@@ -178,7 +180,7 @@
             // btnDel
             // 
             this.btnDel.Font = new System.Drawing.Font("Microsoft YaHei UI", 9.75F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.btnDel.Location = new System.Drawing.Point(555, 425);
+            this.btnDel.Location = new System.Drawing.Point(594, 425);
             this.btnDel.Name = "btnDel";
             this.btnDel.Size = new System.Drawing.Size(75, 29);
             this.btnDel.TabIndex = 7;
@@ -189,7 +191,7 @@
             // btnClear
             // 
             this.btnClear.Font = new System.Drawing.Font("Microsoft YaHei UI", 9.75F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.btnClear.Location = new System.Drawing.Point(636, 425);
+            this.btnClear.Location = new System.Drawing.Point(675, 425);
             this.btnClear.Name = "btnClear";
             this.btnClear.Size = new System.Drawing.Size(75, 29);
             this.btnClear.TabIndex = 8;
@@ -207,7 +209,7 @@
             this.toolStripStatusLabel4});
             this.statusStrip1.Location = new System.Drawing.Point(0, 467);
             this.statusStrip1.Name = "statusStrip1";
-            this.statusStrip1.Size = new System.Drawing.Size(797, 24);
+            this.statusStrip1.Size = new System.Drawing.Size(842, 24);
             this.statusStrip1.TabIndex = 9;
             this.statusStrip1.Text = "statusStrip1";
             // 
@@ -216,14 +218,23 @@
             this.toolStripStatusLabel1.ImageAlign = System.Drawing.ContentAlignment.MiddleRight;
             this.toolStripStatusLabel1.Name = "toolStripStatusLabel1";
             this.toolStripStatusLabel1.Size = new System.Drawing.Size(44, 19);
-            this.toolStripStatusLabel1.Text = "Ver: 0.1";
+            this.toolStripStatusLabel1.Text = "Ver: 0.2";
             this.toolStripStatusLabel1.TextAlign = System.Drawing.ContentAlignment.MiddleRight;
             // 
             // toolStripStatusLabel2
             // 
             this.toolStripStatusLabel2.Name = "toolStripStatusLabel2";
-            this.toolStripStatusLabel2.Size = new System.Drawing.Size(542, 19);
+            this.toolStripStatusLabel2.Size = new System.Drawing.Size(614, 19);
             this.toolStripStatusLabel2.Spring = true;
+            // 
+            // toolStripStatusLabel5
+            // 
+            this.toolStripStatusLabel5.BorderSides = System.Windows.Forms.ToolStripStatusLabelBorderSides.Right;
+            this.toolStripStatusLabel5.IsLink = true;
+            this.toolStripStatusLabel5.Name = "toolStripStatusLabel5";
+            this.toolStripStatusLabel5.Size = new System.Drawing.Size(63, 19);
+            this.toolStripStatusLabel5.Text = "使用说明";
+            this.toolStripStatusLabel5.Click += new System.EventHandler(this.toolStripStatusLabel5_Click);
             // 
             // toolStripStatusLabel3
             // 
@@ -242,20 +253,11 @@
             this.toolStripStatusLabel4.Text = "更新地址";
             this.toolStripStatusLabel4.Click += new System.EventHandler(this.toolStripStatusLabel4_Click);
             // 
-            // toolStripStatusLabel5
-            // 
-            this.toolStripStatusLabel5.BorderSides = System.Windows.Forms.ToolStripStatusLabelBorderSides.Right;
-            this.toolStripStatusLabel5.IsLink = true;
-            this.toolStripStatusLabel5.Name = "toolStripStatusLabel5";
-            this.toolStripStatusLabel5.Size = new System.Drawing.Size(63, 19);
-            this.toolStripStatusLabel5.Text = "使用说明";
-            this.toolStripStatusLabel5.Click += new System.EventHandler(this.toolStripStatusLabel5_Click);
-            // 
             // Form1
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 12F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(797, 491);
+            this.ClientSize = new System.Drawing.Size(842, 491);
             this.Controls.Add(this.statusStrip1);
             this.Controls.Add(this.btnClear);
             this.Controls.Add(this.btnDel);
@@ -266,6 +268,7 @@
             this.Controls.Add(this.tbUrls);
             this.Controls.Add(this.label1);
             this.Controls.Add(this.lvDownloadList);
+            this.Icon = ((System.Drawing.Icon)(resources.GetObject("$this.Icon")));
             this.Name = "Form1";
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
             this.Text = "糖豆视频下载工具";
