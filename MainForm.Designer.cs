@@ -1,6 +1,6 @@
 ﻿namespace TangdouDownloader
 {
-    partial class Form1
+    partial class MainForm
     {
         /// <summary>
         /// Required designer variable.
@@ -28,7 +28,7 @@
         /// </summary>
         private void InitializeComponent()
         {
-            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(Form1));
+            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(MainForm));
             this.lvDownloadList = new System.Windows.Forms.ListView();
             this.chId = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
             this.chName = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
@@ -164,7 +164,7 @@
             this.btnAppend.TabIndex = 5;
             this.btnAppend.Text = "添加";
             this.btnAppend.UseVisualStyleBackColor = true;
-            this.btnAppend.Click += new System.EventHandler(this.btnAppend_Click);
+            this.btnAppend.Click += new System.EventHandler(this.BtnAppendClick);
             // 
             // btnStartDownload
             // 
@@ -175,7 +175,7 @@
             this.btnStartDownload.TabIndex = 6;
             this.btnStartDownload.Text = "开始下载";
             this.btnStartDownload.UseVisualStyleBackColor = true;
-            this.btnStartDownload.Click += new System.EventHandler(this.btnStartDownload_Click);
+            this.btnStartDownload.Click += new System.EventHandler(this.BtnStartDownloadClick);
             // 
             // btnDel
             // 
@@ -186,7 +186,7 @@
             this.btnDel.TabIndex = 7;
             this.btnDel.Text = "删除选中";
             this.btnDel.UseVisualStyleBackColor = true;
-            this.btnDel.Click += new System.EventHandler(this.btnDel_Click);
+            this.btnDel.Click += new System.EventHandler(this.BtnDeleteClick);
             // 
             // btnClear
             // 
@@ -197,7 +197,7 @@
             this.btnClear.TabIndex = 8;
             this.btnClear.Text = "清空列表";
             this.btnClear.UseVisualStyleBackColor = true;
-            this.btnClear.Click += new System.EventHandler(this.btnClear_Click);
+            this.btnClear.Click += new System.EventHandler(this.BtnClearClick);
             // 
             // statusStrip1
             // 
@@ -234,7 +234,7 @@
             this.toolStripStatusLabel5.Name = "toolStripStatusLabel5";
             this.toolStripStatusLabel5.Size = new System.Drawing.Size(63, 19);
             this.toolStripStatusLabel5.Text = "使用说明";
-            this.toolStripStatusLabel5.Click += new System.EventHandler(this.toolStripStatusLabel5_Click);
+            this.toolStripStatusLabel5.Click += new System.EventHandler(this.ShowUsageInstructionsClick);
             // 
             // toolStripStatusLabel3
             // 
@@ -243,7 +243,7 @@
             this.toolStripStatusLabel3.Name = "toolStripStatusLabel3";
             this.toolStripStatusLabel3.Size = new System.Drawing.Size(47, 19);
             this.toolStripStatusLabel3.Text = "Github";
-            this.toolStripStatusLabel3.Click += new System.EventHandler(this.toolStripStatusLabel3_Click);
+            this.toolStripStatusLabel3.Click += new System.EventHandler(this.OpenGitHubLinkClick);
             // 
             // toolStripStatusLabel4
             // 
@@ -251,7 +251,7 @@
             this.toolStripStatusLabel4.Name = "toolStripStatusLabel4";
             this.toolStripStatusLabel4.Size = new System.Drawing.Size(59, 19);
             this.toolStripStatusLabel4.Text = "更新地址";
-            this.toolStripStatusLabel4.Click += new System.EventHandler(this.toolStripStatusLabel4_Click);
+            this.toolStripStatusLabel4.Click += new System.EventHandler(this.OpenAliPanLinkClick);
             // 
             // Form1
             // 
