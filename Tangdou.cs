@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
@@ -85,13 +85,33 @@ namespace TangdouDownloader
         /// <returns>The 'vid' parameter or null if not found.</returns>
         public static string GetVid(string url)
         {
-            if (int.TryParse(url, out _))
+            if (string.IsNullOrWhiteSpace(url)) return null;
+
+            url = url.Trim();
+            if (long.TryParse(url, out _))
             {
                 return url;
             }
 
-            var query = HttpUtility.ParseQueryString(new Uri(url).Query);
-            return query["vid"];
+            var match = Regex.Match(url, @"vid=(\d+)");
+            if (match.Success)
+            {
+                return match.Groups[1].Value;
+            }
+
+            try
+            {
+                var query = HttpUtility.ParseQueryString(new Uri(url).Query);
+                var vid = query["vid"];
+                if (!string.IsNullOrEmpty(vid)) return vid;
+            }
+            catch
+            {
+                // Ignored if invalid URI format
+            }
+
+            match = Regex.Match(url, @"(\d{8,})");
+            return match.Success ? match.Groups[1].Value : null;
         }
 
         /// <summary>
@@ -111,7 +131,7 @@ namespace TangdouDownloader
     public class HtmlParser
     {
         private static readonly HttpClient Client = new HttpClient();
-        private const string VideoShareUrl = "http://share.tangdou.com/splay.php?vid=";
+        private const string VideoShareUrl = "https://www.tangdou.com/play/?vid=";
 
         /// <summary>
         /// Fetches the video URL from a Tangdou share page using HTML parsing.
@@ -158,7 +178,7 @@ namespace TangdouDownloader
     public class TangdouVideoApi
     {
         private static readonly HttpClient Client = new HttpClient();
-        private readonly string _apiBaseUrl = "http://api-h5.tangdou.com/sample/share/main?vid=";
+        private readonly string _apiBaseUrl = "https://api-h5.tangdou.com/mtangdou/video/play?vid=";
 
         /// <summary>
         /// Internal method to fetch API response given a 'vid'.
@@ -203,13 +223,17 @@ namespace TangdouDownloader
 
             // Extracting video details
             var data = (JObject)apiDict["data"];
-            videoInfo["name"] = data["title"];
+            if (data == null)
+            {
+                throw new Exception($"API returned error or empty data for vid '{vid}'");
+            }
+            videoInfo["name"] = data["title"]?.ToString();
 
             var urlMap = new Dictionary<string, string>();
             videoInfo["urls"] = urlMap;
 
             // Build a list of potential video URLs in different definitions
-            var videoUrlRaw = data["video_url"]?.ToString();
+            var videoUrlRaw = data["play_url"]?.ToString() ?? data["video_url"]?.ToString();
             string[] resolutions = { "H1080P", "V1080P", "H720P", "V720P", "H540P", "V540P", "H360P", "V360P" };
 
             if (!string.IsNullOrEmpty(videoUrlRaw))

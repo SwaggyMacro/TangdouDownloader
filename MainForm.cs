@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -62,7 +62,7 @@ namespace TangdouDownloader
 
                 try
                 {
-                    url = url.StartsWith("http") ? url : "https://www.tangdouddn.com/h5/play?vid=" + url;
+                    url = url.StartsWith("http") ? url : "https://www.tangdou.com/play/?vid=" + url;
                     var videoInfo = await videoApi.GetVideoInfoAsync(url);
 
                     item.SubItems.Add(videoInfo["name"].ToString());
