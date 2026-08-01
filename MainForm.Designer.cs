@@ -74,6 +74,7 @@ namespace TangdouDownloader
             this.lvDownloadList.TabIndex = 0;
             this.lvDownloadList.UseCompatibleStateImageBehavior = false;
             this.lvDownloadList.View = System.Windows.Forms.View.Details;
+            this.lvDownloadList.DoubleClick += new System.EventHandler(this.LvDownloadListDoubleClick);
             // 
             // chId
             // 
