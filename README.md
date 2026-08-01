@@ -4,5 +4,12 @@
 3. 点击“添加”按钮添加至下载列表
 4. 点击“开始下载”按钮
 5. 下载完成后视频自动保存至软件的运行目录
+
+### 📝更新日志
+#### v0.4
+- 修复糖豆网视频链接解析失败问题（更新 API 接口及 `play_url` 视频字段）。
+- 修复 14 位数值 VID 导致的数据溢出与解析报错问题。
+- 优化视频链接粘贴兼容性，支持 `https://www.tangdou.com/play/?vid=...`、分享页链接与纯 VID 输入。
+
 ### 🖼️操作截图
 ![Animation](https://github.com/SwaggyMacro/TangdouDownloader/assets/38845682/2125be8c-4ce0-4d2c-8c23-efec48550898)
