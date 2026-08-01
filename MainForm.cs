@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -23,13 +23,15 @@ namespace TangdouDownloader
             InitializeForm();
         }
 
+        private string DownloadDir => Path.Combine(Application.StartupPath, "downloads");
+
         private void InitializeForm()
         {
             // default choose the first item
             cbbQuality.SelectedIndex = 0;
             ServicePointManager.ServerCertificateValidationCallback = (sender, certificate, chain, sslPolicyErrors) => true;
             // mkdir to save video
-            Directory.CreateDirectory("downloads");
+            Directory.CreateDirectory(DownloadDir);
         }
 
         private void ToggleButtonStates()
@@ -62,7 +64,7 @@ namespace TangdouDownloader
 
                 try
                 {
-                    url = url.StartsWith("http") ? url : "https://www.tangdouddn.com/h5/play?vid=" + url;
+                    url = url.StartsWith("http") ? url : "https://www.tangdou.com/play/?vid=" + url;
                     var videoInfo = await videoApi.GetVideoInfoAsync(url);
 
                     item.SubItems.Add(videoInfo["name"].ToString());
@@ -137,10 +139,10 @@ namespace TangdouDownloader
                 await StartDownloadsAsync();
                 ToggleButtonStates();
                 if (MessageBox.Show(this,
-                        $"视频下载完成，已保存至软件运行目录下Downloads文件夹({Application.StartupPath + "\\Downloads"})\n是否打开视频保存目录？",
+                        $"视频下载完成，已保存至软件运行目录下downloads文件夹({DownloadDir})\n是否打开视频保存目录？",
                         "提示", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
                 {
-                    Process.Start("explorer.exe", Application.StartupPath + "\\Downloads");
+                    Process.Start("explorer.exe", DownloadDir);
                 }
             });
         }
@@ -176,8 +178,10 @@ namespace TangdouDownloader
                         {
                             BeginInvoke(new Action(() => item.SubItems[2].Text = "下载中"));
 
-                            await fileDownloader.DownloadFileAsync(item.SubItems[5].Text,
-                                $"downloads/{fileDownloader.SanitizeFileName(item.SubItems[1].Text)}.mp4", cts.Token);
+                            var sanitizedFileName = fileDownloader.SanitizeFileName(item.SubItems[1].Text);
+                            var savePath = Path.Combine(DownloadDir, $"{sanitizedFileName}.mp4");
+
+                            await fileDownloader.DownloadFileAsync(item.SubItems[5].Text, savePath, cts.Token);
 
                             BeginInvoke(new Action(() => item.SubItems[2].Text = "完成"));
                         }
@@ -194,6 +198,40 @@ namespace TangdouDownloader
                 }).ToList();
 
             await Task.WhenAll(tasks);
+        }
+
+        private void LvDownloadListDoubleClick(object sender, EventArgs e)
+        {
+            if (lvDownloadList.SelectedItems.Count == 0) return;
+
+            var item = lvDownloadList.SelectedItems[0];
+            var status = item.SubItems[2].Text;
+
+            if (status.Equals("完成"))
+            {
+                using (var fileDownloader = new HttpFileDownloader(item.Index))
+                {
+                    var sanitizedFileName = fileDownloader.SanitizeFileName(item.SubItems[1].Text);
+                    var filePath = Path.Combine(DownloadDir, $"{sanitizedFileName}.mp4");
+
+                    if (File.Exists(filePath))
+                    {
+                        Process.Start("explorer.exe", $"/select,\"{filePath}\"");
+                    }
+                    else
+                    {
+                        MessageBox.Show(this, "该视频文件已被移动或删除，将为您打开下载目录。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        Process.Start("explorer.exe", DownloadDir);
+                    }
+                }
+            }
+            else
+            {
+                if (btnStartDownload.Enabled)
+                {
+                    BtnStartDownloadClick(sender, e);
+                }
+            }
         }
 
         private void BtnDeleteClick(object sender, EventArgs e)

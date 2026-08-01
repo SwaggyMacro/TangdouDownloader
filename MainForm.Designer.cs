@@ -1,4 +1,4 @@
-﻿namespace TangdouDownloader
+namespace TangdouDownloader
 {
     partial class MainForm
     {
@@ -74,6 +74,7 @@
             this.lvDownloadList.TabIndex = 0;
             this.lvDownloadList.UseCompatibleStateImageBehavior = false;
             this.lvDownloadList.View = System.Windows.Forms.View.Details;
+            this.lvDownloadList.DoubleClick += new System.EventHandler(this.LvDownloadListDoubleClick);
             // 
             // chId
             // 
@@ -218,7 +219,7 @@
             this.toolStripStatusLabel1.ImageAlign = System.Drawing.ContentAlignment.MiddleRight;
             this.toolStripStatusLabel1.Name = "toolStripStatusLabel1";
             this.toolStripStatusLabel1.Size = new System.Drawing.Size(44, 19);
-            this.toolStripStatusLabel1.Text = "Ver: 0.3";
+            this.toolStripStatusLabel1.Text = "Ver: 0.4";
             this.toolStripStatusLabel1.TextAlign = System.Drawing.ContentAlignment.MiddleRight;
             // 
             // toolStripStatusLabel2
