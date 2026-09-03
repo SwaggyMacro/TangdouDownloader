@@ -219,7 +219,7 @@ namespace TangdouDownloader
             this.toolStripStatusLabel1.ImageAlign = System.Drawing.ContentAlignment.MiddleRight;
             this.toolStripStatusLabel1.Name = "toolStripStatusLabel1";
             this.toolStripStatusLabel1.Size = new System.Drawing.Size(44, 19);
-            this.toolStripStatusLabel1.Text = "Ver: 0.4";
+            this.toolStripStatusLabel1.Text = "Ver: 0.5";
             this.toolStripStatusLabel1.TextAlign = System.Drawing.ContentAlignment.MiddleRight;
             // 
             // toolStripStatusLabel2

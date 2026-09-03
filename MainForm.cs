@@ -32,6 +32,10 @@ namespace TangdouDownloader
             ServicePointManager.ServerCertificateValidationCallback = (sender, certificate, chain, sslPolicyErrors) => true;
             // mkdir to save video
             Directory.CreateDirectory(DownloadDir);
+
+            // Dynamically set version label from AssemblyVersion
+            var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+            toolStripStatusLabel1.Text = $"Ver: {version.Major}.{version.Minor}";
         }
 
         private void ToggleButtonStates()
