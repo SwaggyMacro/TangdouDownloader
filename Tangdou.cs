@@ -185,33 +185,52 @@ namespace TangdouDownloader
         {
             AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
         });
-        private readonly string _apiBaseUrl = "https://api-h5.tangdou.com/mtangdou/video/play?vid=";
 
         /// <summary>
         /// Internal method to fetch API response given a 'vid'.
+        /// Uses sample/share/main as primary endpoint for full video files and falls back to mtangdou/video/play.
         /// </summary>
         private async Task<Dictionary<string, object>> FetchApiInfoAsync(string vid)
         {
-            var requestUrl = _apiBaseUrl + vid;
-            var headerBuilder = new HttpHeaderBuilder(requestUrl);
-            var headers = headerBuilder.BuildHeaders();
-
-            using (var request = new HttpRequestMessage(HttpMethod.Get, requestUrl))
+            var apiUrls = new[]
             {
-                foreach (var header in headers)
-                {
-                    request.Headers.TryAddWithoutValidation(header.Key, header.Value);
-                }
+                "https://api-h5.tangdou.com/sample/share/main?vid=" + vid,
+                "https://api-h5.tangdou.com/mtangdou/video/play?vid=" + vid
+            };
 
-                var response = await Client.SendAsync(request);
-                if (!response.IsSuccessStatusCode)
+            foreach (var requestUrl in apiUrls)
+            {
+                try
                 {
-                    throw new HttpRequestException($"Request error, error code: {response.StatusCode}");
-                }
+                    var headerBuilder = new HttpHeaderBuilder(requestUrl);
+                    var headers = headerBuilder.BuildHeaders();
 
-                var jsonResponse = await response.Content.ReadAsStringAsync();
-                return JsonConvert.DeserializeObject<Dictionary<string, object>>(jsonResponse);
+                    using (var request = new HttpRequestMessage(HttpMethod.Get, requestUrl))
+                    {
+                        foreach (var header in headers)
+                        {
+                            request.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                        }
+
+                        var response = await Client.SendAsync(request);
+                        if (response.IsSuccessStatusCode)
+                        {
+                            var jsonResponse = await response.Content.ReadAsStringAsync();
+                            var dict = JsonConvert.DeserializeObject<Dictionary<string, object>>(jsonResponse);
+                            if (dict != null && dict.ContainsKey("data") && dict["data"] is JObject data && data.Count > 0)
+                            {
+                                return dict;
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    // Continue to fallback endpoint
+                }
             }
+
+            throw new HttpRequestException($"Request error: cannot fetch video metadata for vid '{vid}'");
         }
 
         /// <summary>
@@ -284,6 +303,12 @@ namespace TangdouDownloader
                 }
 
                 await Task.WhenAll(checkTasks);
+
+                // If no probe matched, fallback to raw video URL
+                if (urlMap.Count == 0)
+                {
+                    urlMap["默认"] = videoUrlRaw;
+                }
             }
 
             return videoInfo;

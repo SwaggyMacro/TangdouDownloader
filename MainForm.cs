@@ -101,7 +101,7 @@ namespace TangdouDownloader
 
         private static string GetDownloadUrl(Dictionary<string, string> vUrls, string quality)
         {
-            if (vUrls == null) return string.Empty;
+            if (vUrls == null || vUrls.Count == 0) return string.Empty;
 
             var qualityMap = new Dictionary<string, string>
             {
@@ -115,9 +115,21 @@ namespace TangdouDownloader
                 { "中等", "H720P" }
             };
 
-            return qualityMap.ContainsKey(quality) && vUrls.ContainsKey(qualityMap[quality])
-                ? vUrls[qualityMap[quality]]
-                : vUrls.Values.FirstOrDefault();
+            if (qualityMap.ContainsKey(quality) && vUrls.ContainsKey(qualityMap[quality]))
+            {
+                return vUrls[qualityMap[quality]];
+            }
+
+            var priorityOrder = new[] { "H1080P", "V1080P", "H720P", "V720P", "H540P", "V540P", "H480P", "H360P", "V360P" };
+            foreach (var res in priorityOrder)
+            {
+                if (vUrls.ContainsKey(res))
+                {
+                    return vUrls[res];
+                }
+            }
+
+            return vUrls.Values.FirstOrDefault();
         }
 
         private void ShowMessage(string message, List<string> urls)
