@@ -60,7 +60,6 @@ namespace TangdouDownloader
             var headers = new Dictionary<string, string>
             {
                 ["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3",
-                ["Accept-Encoding"] = "gzip, deflate, br",
                 ["Accept-Language"] = "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7,zh-CN;q=0.6",
                 ["Connection"] = "keep-alive",
                 ["Host"] = host,
@@ -130,7 +129,10 @@ namespace TangdouDownloader
     /// </summary>
     public class HtmlParser
     {
-        private static readonly HttpClient Client = new HttpClient();
+        private static readonly HttpClient Client = new HttpClient(new HttpClientHandler
+        {
+            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+        });
         private const string VideoShareUrl = "https://www.tangdou.com/play/?vid=";
 
         /// <summary>
@@ -146,29 +148,31 @@ namespace TangdouDownloader
                 throw new ArgumentException($"Can not find 'vid' parameter from '{sourceUrl}'");
             }
 
-            var headerBuilder = new HttpHeaderBuilder(VideoShareUrl + vid);
+            var requestUrl = VideoShareUrl + vid;
+            var headerBuilder = new HttpHeaderBuilder(requestUrl);
             var headers = headerBuilder.BuildHeaders();
 
-            // Clear existing headers to avoid duplicates or conflicts, then add the new ones
-            Client.DefaultRequestHeaders.Clear();
-            foreach (var header in headers)
+            using (var request = new HttpRequestMessage(HttpMethod.Get, requestUrl))
             {
-                Client.DefaultRequestHeaders.Add(header.Key, header.Value);
+                foreach (var header in headers)
+                {
+                    request.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                }
+
+                var response = await Client.SendAsync(request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new HttpRequestException($"Request error, error code: {response.StatusCode}");
+                }
+
+                var pageContent = await response.Content.ReadAsStringAsync();
+                var doc = new HtmlDocument();
+                doc.LoadHtml(pageContent);
+
+                // Attempt to extract video src from the <video> tag
+                var videoNode = doc.DocumentNode.SelectSingleNode("//video");
+                return videoNode?.GetAttributeValue("src", null);
             }
-
-            var response = await Client.GetAsync(VideoShareUrl + vid);
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new HttpRequestException($"Request error, error code: {response.StatusCode}");
-            }
-
-            var pageContent = await response.Content.ReadAsStringAsync();
-            var doc = new HtmlDocument();
-            doc.LoadHtml(pageContent);
-
-            // Attempt to extract video src from the <video> tag
-            var videoNode = doc.DocumentNode.SelectSingleNode("//video");
-            return videoNode?.GetAttributeValue("src", null);
         }
     }
 
@@ -177,32 +181,56 @@ namespace TangdouDownloader
     /// </summary>
     public class TangdouVideoApi
     {
-        private static readonly HttpClient Client = new HttpClient();
-        private readonly string _apiBaseUrl = "https://api-h5.tangdou.com/mtangdou/video/play?vid=";
+        private static readonly HttpClient Client = new HttpClient(new HttpClientHandler
+        {
+            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+        });
 
         /// <summary>
         /// Internal method to fetch API response given a 'vid'.
+        /// Uses sample/share/main as primary endpoint for full video files and falls back to mtangdou/video/play.
         /// </summary>
         private async Task<Dictionary<string, object>> FetchApiInfoAsync(string vid)
         {
-            var headerBuilder = new HttpHeaderBuilder(_apiBaseUrl + vid);
-            var headers = headerBuilder.BuildHeaders();
-
-            // Clear existing headers to avoid duplicates or conflicts, then add the new ones
-            Client.DefaultRequestHeaders.Clear();
-            foreach (var header in headers)
+            var apiUrls = new[]
             {
-                Client.DefaultRequestHeaders.Add(header.Key, header.Value);
+                "https://api-h5.tangdou.com/sample/share/main?vid=" + vid,
+                "https://api-h5.tangdou.com/mtangdou/video/play?vid=" + vid
+            };
+
+            foreach (var requestUrl in apiUrls)
+            {
+                try
+                {
+                    var headerBuilder = new HttpHeaderBuilder(requestUrl);
+                    var headers = headerBuilder.BuildHeaders();
+
+                    using (var request = new HttpRequestMessage(HttpMethod.Get, requestUrl))
+                    {
+                        foreach (var header in headers)
+                        {
+                            request.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                        }
+
+                        var response = await Client.SendAsync(request);
+                        if (response.IsSuccessStatusCode)
+                        {
+                            var jsonResponse = await response.Content.ReadAsStringAsync();
+                            var dict = JsonConvert.DeserializeObject<Dictionary<string, object>>(jsonResponse);
+                            if (dict != null && dict.ContainsKey("data") && dict["data"] is JObject data && data.Count > 0)
+                            {
+                                return dict;
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    // Continue to fallback endpoint
+                }
             }
 
-            var response = await Client.GetAsync(_apiBaseUrl + vid);
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new HttpRequestException($"Request error, error code: {response.StatusCode}");
-            }
-
-            var jsonResponse = await response.Content.ReadAsStringAsync();
-            return JsonConvert.DeserializeObject<Dictionary<string, object>>(jsonResponse);
+            throw new HttpRequestException($"Request error: cannot fetch video metadata for vid '{vid}'");
         }
 
         /// <summary>
@@ -238,20 +266,48 @@ namespace TangdouDownloader
 
             if (!string.IsNullOrEmpty(videoUrlRaw))
             {
-                // Update the host header for HEAD requests
-                Client.DefaultRequestHeaders.Host = new Uri(videoUrlRaw).Host;
-
+                var checkTasks = new List<Task>();
                 foreach (var resolution in resolutions)
                 {
-                    // Substitute the resolution part of the URL using a regex
-                    var modifiedUrl = Regex.Replace(videoUrlRaw, "_.[0-9]+P", $"_{resolution}");
-                    var headResponse = await Client.SendAsync(new HttpRequestMessage(HttpMethod.Head, modifiedUrl));
-
-                    // If the HEAD request is not 404, assume the URL is valid
-                    if (headResponse.StatusCode != HttpStatusCode.NotFound)
+                    var res = resolution;
+                    checkTasks.Add(Task.Run(async () =>
                     {
-                        urlMap[resolution] = modifiedUrl;
-                    }
+                        var modifiedUrl = Regex.Replace(videoUrlRaw, "_.[0-9]+P", $"_{res}");
+                        var headerBuilder = new HttpHeaderBuilder(modifiedUrl);
+                        var headers = headerBuilder.BuildHeaders();
+
+                        using (var headRequest = new HttpRequestMessage(HttpMethod.Head, modifiedUrl))
+                        {
+                            foreach (var header in headers)
+                            {
+                                headRequest.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                            }
+
+                            try
+                            {
+                                var headResponse = await Client.SendAsync(headRequest);
+                                if (headResponse.StatusCode != HttpStatusCode.NotFound)
+                                {
+                                    lock (urlMap)
+                                    {
+                                        urlMap[res] = modifiedUrl;
+                                    }
+                                }
+                            }
+                            catch
+                            {
+                                // Ignore failed probe
+                            }
+                        }
+                    }));
+                }
+
+                await Task.WhenAll(checkTasks);
+
+                // If no probe matched, fallback to raw video URL
+                if (urlMap.Count == 0)
+                {
+                    urlMap["默认"] = videoUrlRaw;
                 }
             }
 

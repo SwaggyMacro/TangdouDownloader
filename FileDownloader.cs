@@ -1,7 +1,8 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -16,7 +17,10 @@ namespace TangdouDownloader
         public HttpFileDownloader(int id)
         {
             // 初始化HttpClient
-            _client = new HttpClient();
+            _client = new HttpClient(new HttpClientHandler
+            {
+                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+            });
             _downloaderId = id;
         }
 
