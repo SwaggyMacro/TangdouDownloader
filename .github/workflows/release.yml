@@ -16,8 +16,34 @@ permissions:
   contents: write
 
 jobs:
+  release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.vars.outputs.TAG_NAME }}
+    steps:
+      - name: Determine tag name
+        id: vars
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "TAG_NAME=${{ github.event.inputs.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "TAG_NAME=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.TAG_NAME }}
+          name: ${{ steps.vars.outputs.TAG_NAME }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   publish:
     name: Publish ${{ matrix.name }}
+    needs: release
     strategy:
       fail-fast: false
       matrix:
@@ -25,15 +51,18 @@ jobs:
           - name: Windows x64
             os: windows-latest
             rid: win-x64
-            archive: zip
+            executable: TangdouDownloader.Desktop.exe
+            asset_name: TangdouDownloader-win-x64.exe
           - name: Linux x64
             os: ubuntu-latest
             rid: linux-x64
-            archive: tar.gz
+            executable: TangdouDownloader.Desktop
+            asset_name: TangdouDownloader-linux-x64
           - name: macOS x64
             os: macos-13
             rid: osx-x64
-            archive: tar.gz
+            executable: TangdouDownloader.Desktop
+            asset_name: TangdouDownloader-osx-x64
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
@@ -63,49 +92,15 @@ jobs:
           -p:DebugType=None
           -p:DebugSymbols=false
 
-      - name: Package Windows
-        if: matrix.archive == 'zip'
+      - name: Prepare executable asset
         shell: pwsh
-        run: Compress-Archive -Path "publish/${{ matrix.rid }}/*" -DestinationPath "TangdouDownloader-${{ matrix.rid }}.zip" -Force
+        run: Copy-Item "publish/${{ matrix.rid }}/${{ matrix.executable }}" "${{ matrix.asset_name }}"
 
-      - name: Package Unix
-        if: matrix.archive == 'tar.gz'
-        run: tar -czf "TangdouDownloader-${{ matrix.rid }}.tar.gz" -C "publish/${{ matrix.rid }}" .
-
-      - name: Upload package artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: TangdouDownloader-${{ matrix.rid }}
-          path: TangdouDownloader-${{ matrix.rid }}.${{ matrix.archive }}
-          if-no-files-found: error
-
-  release:
-    name: Create GitHub release
-    needs: publish
-    runs-on: ubuntu-latest
-    steps:
-      - name: Determine tag name
-        id: vars
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "TAG_NAME=${{ github.event.inputs.tag_name }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "TAG_NAME=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Download platform packages
-        uses: actions/download-artifact@v4
-        with:
-          path: release-assets
-          merge-multiple: true
-
-      - name: Create GitHub release
+      - name: Upload executable to release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.vars.outputs.TAG_NAME }}
-          name: ${{ steps.vars.outputs.TAG_NAME }}
-          files: release-assets/*
-          generate_release_notes: true
+          tag_name: ${{ needs.release.outputs.tag_name }}
+          files: ${{ matrix.asset_name }}
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
