@@ -1,0 +1,51 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:semi="https://irihi.tech/semi"
+             x:Class="TangdouDownloader.Desktop.App"
+             RequestedThemeVariant="Dark">
+  <Application.Resources>
+    <!-- DataGrid's deferred Fluent template references this compatibility key. -->
+    <SolidColorBrush x:Key="SystemControlTransparentBrush" Color="Transparent" />
+  </Application.Resources>
+  <Application.Styles>
+    <semi:SemiTheme Locale="zh-CN" />
+    <semi:UrsaSemiTheme Locale="zh-CN" />
+    <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
+    <Style Selector="Window">
+      <Setter Property="FontFamily" Value="Segoe UI Variable, Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Background" Value="{DynamicResource SemiColorBgDefault}" />
+      <Setter Property="Foreground" Value="{DynamicResource SemiColorText0}" />
+    </Style>
+    <Style Selector="TextBox, ComboBox"><Setter Property="MinHeight" Value="32" /></Style>
+    <Style Selector="Button"><Setter Property="MinHeight" Value="32" /><Setter Property="VerticalContentAlignment" Value="Center" /></Style>
+    <Style Selector="Button.nav-button"><Setter Property="Background" Value="Transparent" /><Setter Property="BorderBrush" Value="Transparent" /><Setter Property="Foreground" Value="{DynamicResource SemiColorText1}" /><Setter Property="Padding" Value="14,7" /><Setter Property="MinWidth" Value="112" /><Setter Property="FontWeight" Value="SemiBold" /></Style>
+    <Style Selector="Button.nav-button:pointerover"><Setter Property="Background" Value="{DynamicResource SemiColorFill0}" /></Style>
+    <Style Selector="Button.nav-button.selected"><Setter Property="Background" Value="{DynamicResource SemiColorPrimary}" /><Setter Property="Foreground" Value="White" /></Style>
+    <Style Selector="Button.task-filter"><Setter Property="Background" Value="Transparent" /><Setter Property="BorderBrush" Value="Transparent" /><Setter Property="Foreground" Value="{DynamicResource SemiColorText1}" /><Setter Property="Padding" Value="10,4" /><Setter Property="MinWidth" Value="76" /><Setter Property="FontSize" Value="12" /></Style>
+    <Style Selector="Button.task-filter:pointerover"><Setter Property="Background" Value="{DynamicResource SemiColorFill0}" /></Style>
+    <Style Selector="Button.task-filter.selected"><Setter Property="Background" Value="{DynamicResource SemiColorPrimaryLight}" /><Setter Property="Foreground" Value="{DynamicResource SemiColorPrimary}" /></Style>
+    <Style Selector="Button.icon-button"><Setter Property="Padding" Value="8,5" /></Style>
+    <Style Selector="Border.panel"><Setter Property="Background" Value="{DynamicResource SemiColorBgDefault}" /><Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" /><Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="8" /></Style>
+    <Style Selector="Border.input-summary"><Setter Property="Background" Value="{DynamicResource SemiColorBgDefault}" /><Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" /><Setter Property="BorderThickness" Value="1" /></Style>
+    <Style Selector="ProgressBar"><Setter Property="Foreground" Value="{DynamicResource SemiColorPrimary}" /><Setter Property="Height" Value="6" /><Setter Property="CornerRadius" Value="3" /></Style>
+    <Style Selector="Border.quality-tag"><Setter Property="Background" Value="{DynamicResource SemiColorPrimaryLight}" /><Setter Property="BorderBrush" Value="{DynamicResource SemiColorPrimary}" /><Setter Property="BorderThickness" Value="1" /></Style>
+    <Style Selector="Border.status-tag"><Setter Property="Background" Value="{DynamicResource SemiColorFill0}" /><Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" /><Setter Property="BorderThickness" Value="1" /></Style>
+    <Style Selector="Border.status-tag.downloading"><Setter Property="Background" Value="{DynamicResource SemiColorPrimaryLight}" /><Setter Property="BorderBrush" Value="{DynamicResource SemiColorPrimary}" /></Style>
+    <Style Selector="Border.status-tag.completed"><Setter Property="Background" Value="{DynamicResource SemiColorSuccessLight}" /><Setter Property="BorderBrush" Value="{DynamicResource SemiColorSuccess}" /></Style>
+    <Style Selector="Border.status-tag.paused"><Setter Property="Background" Value="{DynamicResource SemiColorWarningLight}" /><Setter Property="BorderBrush" Value="{DynamicResource SemiColorWarning}" /></Style>
+    <Style Selector="Border.status-tag.failed"><Setter Property="Background" Value="{DynamicResource SemiColorDangerLight}" /><Setter Property="BorderBrush" Value="{DynamicResource SemiColorDanger}" /></Style>
+    <Style Selector="TextBlock.status-text"><Setter Property="Foreground" Value="{DynamicResource SemiColorText1}" /></Style>
+    <Style Selector="TextBlock.status-text.downloading, TextBlock.status-icon.downloading"><Setter Property="Foreground" Value="{DynamicResource SemiColorPrimary}" /></Style>
+    <Style Selector="TextBlock.status-text.completed, TextBlock.status-icon.completed"><Setter Property="Foreground" Value="{DynamicResource SemiColorSuccess}" /></Style>
+    <Style Selector="TextBlock.status-text.paused, TextBlock.status-icon.paused"><Setter Property="Foreground" Value="{DynamicResource SemiColorWarning}" /></Style>
+    <Style Selector="TextBlock.status-text.failed, TextBlock.status-icon.failed"><Setter Property="Foreground" Value="{DynamicResource SemiColorDanger}" /></Style>
+    <Style Selector="DataGrid"><Setter Property="Background" Value="{DynamicResource SemiColorBgDefault}" /><Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" /><Setter Property="Foreground" Value="{DynamicResource SemiColorText0}" /><Setter Property="RowBackground" Value="{DynamicResource SemiColorBgDefault}" /><Setter Property="GridLinesVisibility" Value="Horizontal" /><Setter Property="RowHeight" Value="78" /></Style>
+    <Style Selector="DataGridColumnHeader"><Setter Property="Background" Value="{DynamicResource SemiColorFill0}" /><Setter Property="Foreground" Value="{DynamicResource SemiColorText2}" /><Setter Property="FontSize" Value="11" /><Setter Property="FontWeight" Value="SemiBold" /><Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" /></Style>
+    <Style Selector="DataGrid.history-grid DataGridColumnHeader"><Setter Property="FontSize" Value="10" /></Style>
+    <Style Selector="DataGridRow:pointerover, DataGridRow:selected, DataGridRow:selected:pointerover, DataGridRow:selected:focus"><Setter Property="Background" Value="{DynamicResource SemiColorBgDefault}" /><Setter Property="Foreground" Value="{DynamicResource SemiColorText0}" /></Style>
+    <Style Selector="DataGridCell"><Setter Property="Focusable" Value="False" /><Setter Property="IsTabStop" Value="False" /><Setter Property="BorderThickness" Value="0" /></Style>
+    <Style Selector="DataGridCell:selected, DataGridCell:selected:pointerover, DataGridCell:selected:focus, DataGridCell:focus, DataGridCell:current"><Setter Property="Background" Value="Transparent" /><Setter Property="BorderBrush" Value="Transparent" /></Style>
+    <Style Selector="DataGridCell:selected /template/ Border, DataGridCell:focus /template/ Border, DataGridCell:current /template/ Border"><Setter Property="Background" Value="Transparent" /><Setter Property="BorderBrush" Value="Transparent" /></Style>
+  </Application.Styles>
+</Application>

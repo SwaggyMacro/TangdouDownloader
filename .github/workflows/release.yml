@@ -8,52 +8,101 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release Tag Name (e.g. v0.5)'
+        description: Release tag name (for example v0.5)
         required: false
-        default: 'v0.5'
+        default: v0.5
+
+permissions:
+  contents: write
 
 jobs:
-  release:
-    runs-on: windows-latest
-    permissions:
-      contents: write
-
+  publish:
+    name: Publish ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            rid: win-x64
+            archive: zip
+          - name: Linux x64
+            os: ubuntu-latest
+            rid: linux-x64
+            archive: tar.gz
+          - name: macOS x64
+            os: macos-13
+            rid: osx-x64
+            archive: tar.gz
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
         with:
-          fetch-depth: 0
+          dotnet-version: 8.x
 
-      - name: Setup NuGet
-        uses: NuGet/setup-nuget@v2
+      - name: Restore
+        run: dotnet restore TangdouDownloader.slnx
 
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
+      - name: Publish self-contained desktop app
+        run: >-
+          dotnet publish TangdouDownloader.Desktop/TangdouDownloader.Desktop.csproj
+          --configuration Release
+          --runtime ${{ matrix.rid }}
+          --self-contained true
+          --output publish/${{ matrix.rid }}
+          -p:PublishTrimmed=true
+          -p:TrimMode=partial
+          -p:PublishReadyToRun=true
+          -p:DebugType=None
+          -p:DebugSymbols=false
 
-      - name: Restore NuGet Packages
-        run: nuget restore TangdouDownloader.sln
+      - name: Package Windows
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: Compress-Archive -Path "publish/${{ matrix.rid }}/*" -DestinationPath "TangdouDownloader-${{ matrix.rid }}.zip" -Force
 
-      - name: Build Solution (Release)
-        run: msbuild TangdouDownloader.sln /p:Configuration=Release /p:Platform="Any CPU"
+      - name: Package Unix
+        if: matrix.archive == 'tar.gz'
+        run: tar -czf "TangdouDownloader-${{ matrix.rid }}.tar.gz" -C "publish/${{ matrix.rid }}" .
 
-      - name: Determine Tag Name
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TangdouDownloader-${{ matrix.rid }}
+          path: TangdouDownloader-${{ matrix.rid }}.${{ matrix.archive }}
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub release
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine tag name
         id: vars
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "TAG_NAME=${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
+            echo "TAG_NAME=${{ github.event.inputs.tag_name }}" >> "$GITHUB_OUTPUT"
           else
-            echo "TAG_NAME=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "TAG_NAME=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create GitHub Release
+      - name: Download platform packages
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.vars.outputs.TAG_NAME }}
           name: ${{ steps.vars.outputs.TAG_NAME }}
-          files: bin/Release/TangdouDownloader.exe
+          files: release-assets/*
           generate_release_notes: true
-          draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,621 @@
+<!DOCTYPE html><html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>糖豆视频下载工具 (Tangdou Video Downloader) - Avalonia 11.2 Ursa Edition</title>
+<!-- Tailwind CSS v3 with forms and container queries -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            ursa: {
+              window: '#141518',
+              bg: '#18191c',
+              card: '#222327',
+              cardHover: '#282a2f',
+              border: '#33353b',
+              borderSubtle: '#2a2b30',
+              accent: '#3370ff',
+              accentHover: '#205ae6',
+              accentActive: '#165dff',
+              textPrimary: '#f2f3f5',
+              textSecondary: '#9ca3af',
+              textMuted: '#6b7280',
+              success: '#00b42a',
+              successBg: 'rgba(0, 180, 42, 0.12)',
+              warning: '#ff7d00',
+              danger: '#f53f3f',
+              dangerBg: 'rgba(245, 63, 63, 0.12)'
+            }
+          },
+          fontFamily: {
+            sans: ['Segoe UI', 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', 'sans-serif'],
+            mono: ['Consolas', 'JetBrains Mono', 'monospace']
+          }
+        }
+      }
+    }
+  </script>
+<style data-purpose="custom-scrollbars">
+    /* Custom sleek dark scrollbar matching Avalonia Ursa */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #18191c;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #3a3c42;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #50535c;
+    }
+  </style>
+<style data-purpose="interactive-animations">
+    .window-btn:hover {
+      background-color: rgba(255, 255, 255, 0.08);
+    }
+    .window-btn-close:hover {
+      background-color: #e81123 !important;
+      color: #ffffff !important;
+    }
+    .tag-blue {
+      background: rgba(51, 112, 255, 0.12);
+      border: 1px solid rgba(51, 112, 255, 0.28);
+      color: #689fff;
+    }
+    .tag-green {
+      background: rgba(0, 180, 42, 0.12);
+      border: 1px solid rgba(0, 180, 42, 0.28);
+      color: #27c346;
+    }
+    .tag-gray {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #9ca3af;
+    }
+  </style>
+</head>
+<body class="bg-ursa-window text-ursa-textPrimary font-sans select-none antialiased min-h-screen flex flex-col justify-between overflow-x-hidden">
+<!-- BEGIN: UrsaDesktopWindowWrapper -->
+<div class="flex flex-col flex-1 w-full bg-ursa-bg border border-ursa-border shadow-2xl overflow-hidden">
+<!-- BEGIN: TitleBar -->
+<header class="h-10 bg-ursa-window flex items-center justify-between px-3 border-b border-ursa-border text-xs select-none">
+<!-- Window Title & Identity -->
+<div class="flex items-center space-x-3">
+<!-- Ursa App Icon -->
+<div class="w-5 h-5 rounded bg-ursa-accent flex items-center justify-center text-white shadow-sm font-bold text-[11px] tracking-tight">
+<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14.5v-9l6 4.5-6 4.5z"></path>
+</svg>
+</div>
+<span class="font-medium text-ursa-textPrimary tracking-normal">糖豆视频下载工具 (Tangdou Video Downloader)</span>
+<span class="px-1.5 py-0.5 rounded text-[10px] bg-[#2a2d34] text-ursa-textSecondary border border-ursa-border">Avalonia 11.2 Ursa Edition</span>
+</div>
+<!-- Right System Control Icons (Replicating Ursa Demo IMAGE_3 Chrome) -->
+<div class="flex items-center h-full -mr-3">
+<!-- Mode Switch: Moon / Sun -->
+<button class="window-btn h-10 w-9 flex items-center justify-center text-ursa-textSecondary hover:text-white transition-colors" title="切换明暗主题">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+<!-- GitHub Repo Icon Button -->
+<a class="window-btn h-10 w-9 flex items-center justify-center text-ursa-textSecondary hover:text-white transition-colors" href="#github" title="查看 GitHub 开源仓库">
+<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+<path clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" fill-rule="evenodd"></path>
+</svg>
+</a>
+<!-- Popout / Expand Icon -->
+<button class="window-btn h-10 w-9 flex items-center justify-center text-ursa-textSecondary hover:text-white transition-colors" title="弹出窗口">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+<path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+</button>
+<!-- Minimize Button -->
+<button class="window-btn h-10 w-11 flex items-center justify-center text-ursa-textSecondary hover:text-white transition-colors" title="最小化">
+<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+<rect height="2" width="24" y="11"></rect>
+</svg>
+</button>
+<!-- Maximize Button -->
+<button class="window-btn h-10 w-11 flex items-center justify-center text-ursa-textSecondary hover:text-white transition-colors" title="最大化">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+<rect height="18" rx="1" width="18" x="3" y="3"></rect>
+</svg>
+</button>
+<!-- Close Button -->
+<button class="window-btn window-btn-close h-10 w-11 flex items-center justify-center text-ursa-textSecondary transition-colors" title="关闭">
+<svg class="w-3.5 h-3.5" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+<line x1="4" x2="20" y1="4" y2="20"></line>
+<line x1="20" x2="4" y1="4" y2="20"></line>
+</svg>
+</button>
+</div>
+</header>
+<!-- END: TitleBar -->
+<!-- BEGIN: TopHorizontalNavigation -->
+<nav class="bg-ursa-window border-b border-ursa-border px-5 py-2.5 flex items-center justify-between">
+<!-- Tabs matching SCREEN_4 style -->
+<div class="flex items-center space-x-2">
+<button class="flex items-center space-x-2 px-4 py-1.5 rounded bg-ursa-accent text-white font-medium text-xs shadow-sm hover:bg-ursa-accentHover transition-colors">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span class="">下载任务</span>
+</button>
+<button class="flex items-center space-x-2 px-4 py-1.5 rounded bg-transparent text-ursa-textSecondary font-medium text-xs hover:bg-[#23252a] hover:text-white transition-colors">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span class="">历史记录</span>
+</button>
+<button class="flex items-center space-x-2 px-4 py-1.5 rounded bg-transparent text-ursa-textSecondary font-medium text-xs hover:bg-[#23252a] hover:text-white transition-colors">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+<path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span class="">参数设置</span>
+</button>
+</div>
+<!-- Right Service Status Indicators -->
+
+</nav>
+<!-- END: TopHorizontalNavigation -->
+<!-- BEGIN: MainContentBody -->
+<main class="p-4 space-y-4 flex-1 overflow-y-auto bg-ursa-bg">
+<!-- BEGIN: InputAreaCard -->
+<section class="bg-ursa-card border border-ursa-border rounded-md p-4 shadow-sm" data-purpose="link-input-card">
+<!-- Header row of input card -->
+<div class="flex items-center justify-between mb-2.5 text-xs">
+<div class="flex items-center space-x-2">
+<svg class="w-4 h-4 text-ursa-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span class="font-semibold text-ursa-textPrimary">添加糖豆视频下载链接</span>
+<span class="text-ursa-textMuted text-[11px]">( 支持批量输入，每行一条，或直接粘贴微信/APP分享文本 )</span>
+</div>
+<button class="flex items-center space-x-1.5 px-3 py-1 rounded bg-[#2c2e35] hover:bg-[#34373f] text-ursa-textPrimary text-xs border border-ursa-border transition-colors">
+<svg class="w-3.5 h-3.5 text-ursa-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span class="">从剪贴板粘贴</span>
+</button>
+</div>
+<!-- Textarea input -->
+<div class="relative">
+<textarea class="w-full bg-[#1c1d21] border border-ursa-border rounded text-xs text-ursa-textPrimary placeholder-ursa-textMuted focus:ring-1 focus:ring-ursa-accent focus:border-ursa-accent p-3 outline-none resize-none font-mono" placeholder="请粘贴糖豆视频链接或分享文本，如：https://www.tangdou.com/v88/d9823412.html..." rows="3">https://www.tangdou.com/v91/d9823412.html
+https://www.tangdou.com/v98/d8721990.html
+杨丽萍广场舞正反面教学 经典形体分解全集 糖豆专属高清</textarea>
+<div class="absolute bottom-2.5 right-3 flex items-center space-x-2 text-[11px] bg-[#1c1d21] px-2 py-0.5 rounded border border-ursa-border">
+<span class="text-ursa-textMuted">识别有效: <strong class="text-ursa-accent font-semibold">3</strong> 条</span>
+<button class="text-ursa-textMuted hover:text-red-400" title="清空文本框">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+</div>
+</div>
+<!-- Configurations & Action Buttons Bar -->
+<div class="mt-3 pt-3 border-t border-ursa-borderSubtle flex flex-wrap items-center justify-between gap-3 text-xs">
+<!-- Left configuration controls -->
+<div class="flex flex-wrap items-center gap-4">
+<!-- Quality Select -->
+<div class="flex items-center space-x-2">
+<span class="text-ursa-textSecondary flex items-center space-x-1">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span class="">清晰度:</span>
+</span>
+<div class="relative">
+<select class="bg-[#1c1d21] border border-ursa-border text-ursa-textPrimary rounded px-2.5 py-1 text-xs appearance-none pr-7 focus:ring-1 focus:ring-ursa-accent outline-none cursor-pointer">
+<option>1080P 超清 (原画)</option>
+<option>720P 高清 (推荐)</option>
+<option>480P 标清 (省流)</option>
+<option>仅提取 MP3 音频</option>
+</select>
+<div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-1.5 text-ursa-textSecondary">
+<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</div>
+</div>
+</div>
+<!-- Threads Config -->
+<div class="flex items-center space-x-2">
+<span class="text-ursa-textSecondary flex items-center space-x-1">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span class="">并发调度:</span>
+</span>
+<div class="relative">
+<select class="bg-[#1c1d21] border border-ursa-border text-ursa-textPrimary rounded px-2.5 py-1 text-xs appearance-none pr-7 focus:ring-1 focus:ring-ursa-accent outline-none cursor-pointer">
+<option>4 线程 (推荐均衡)</option>
+<option>8 线程 (高速并发)</option>
+<option>2 线程 (低配稳定)</option>
+<option>1 线程 (单队列串行)</option>
+</select>
+<div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-1.5 text-ursa-textSecondary">
+<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</div>
+</div>
+</div>
+<!-- Save Path -->
+<div class="flex items-center space-x-2">
+<span class="text-ursa-textSecondary flex items-center space-x-1">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span class="">储存目录:</span>
+</span>
+<div class="flex items-center space-x-1">
+<span class="bg-[#1c1d21] border border-ursa-border px-2 py-1 rounded text-ursa-textPrimary font-mono text-[11px]">D:/Downloads/Tangdou/</span>
+<button class="px-2 py-1 rounded bg-[#2d2f36] hover:bg-[#383a42] text-ursa-textPrimary border border-ursa-border text-xs transition-colors">
+                  浏览...
+                </button>
+</div>
+</div>
+</div>
+<!-- Right Action Buttons -->
+<div class="flex items-center space-x-2">
+<button class="flex items-center space-x-1.5 px-3 py-1.5 rounded bg-[#2a2c33] hover:bg-[#34363f] text-ursa-textPrimary border border-ursa-border transition-colors">
+<svg class="w-3.5 h-3.5 text-ursa-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M12 4v16m8-8H4" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span class="">解析并加入队列</span>
+</button>
+<button class="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-ursa-dangerBg hover:bg-[#3d2023] text-[#ff6464] border border-[#58272a] transition-colors">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span class="">删除选中</span>
+</button>
+<button class="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-[#2b271f] hover:bg-[#383226] text-[#ffb03a] border border-[#574526] transition-colors">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span class="">暂停全部</span>
+</button>
+<button class="flex items-center space-x-1.5 px-4 py-1.5 rounded bg-ursa-accent hover:bg-ursa-accentHover text-white font-medium shadow-sm transition-colors">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span class="">全部开始下载</span>
+</button>
+</div>
+</div>
+</section>
+<!-- END: InputAreaCard -->
+<!-- BEGIN: TaskTableCard -->
+<section class="bg-ursa-card border border-ursa-border rounded-md shadow-sm overflow-hidden flex flex-col" data-purpose="task-datagrid">
+<!-- Table Toolbar & Filters -->
+<div class="px-4 py-2.5 border-b border-ursa-border flex items-center justify-between flex-wrap gap-2 text-xs">
+<!-- Filter pills matching SCREEN_4 -->
+<div class="flex items-center space-x-2">
+<span class="font-semibold text-ursa-textPrimary flex items-center space-x-1.5">
+<svg class="w-4 h-4 text-ursa-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M4 6h16M4 10h16M4 14h16M4 18h16" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span class="">任务列表</span>
+</span>
+<div class="flex items-center space-x-1 ml-3 bg-[#1b1c20] p-0.5 rounded border border-ursa-border">
+<button class="px-2.5 py-1 rounded bg-ursa-accent text-white font-medium text-[11px]">全部 (3)</button>
+<button class="px-2.5 py-1 rounded text-ursa-textSecondary hover:text-ursa-textPrimary hover:bg-[#282a30] text-[11px]">下载中 (1)</button>
+<button class="px-2.5 py-1 rounded text-ursa-textSecondary hover:text-ursa-textPrimary hover:bg-[#282a30] text-[11px]">已完成 (1)</button>
+<button class="px-2.5 py-1 rounded text-ursa-textSecondary hover:text-ursa-textPrimary hover:bg-[#282a30] text-[11px]">排队中 (1)</button>
+</div>
+</div>
+<!-- Search & Operations -->
+<div class="flex items-center space-x-2">
+<div class="relative">
+<input class="w-56 bg-[#1b1c20] border border-ursa-border rounded px-2.5 py-1 text-xs text-ursa-textPrimary placeholder-ursa-textMuted focus:ring-1 focus:ring-ursa-accent outline-none" placeholder="检索标题/VID..." type="text">
+<svg class="w-3.5 h-3.5 absolute right-2.5 top-2 text-ursa-textMuted pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</div>
+<button class="p-1.5 rounded bg-[#2b2c32] hover:bg-[#363840] border border-ursa-border text-ursa-textSecondary hover:text-white transition-colors" title="刷新状态">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+<button class="p-1.5 rounded bg-[#2b2c32] hover:bg-[#363840] border border-ursa-border text-ursa-textSecondary hover:text-white transition-colors" title="导出列表">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+</div>
+</div>
+<!-- DataGrid Table -->
+<div class="overflow-x-auto">
+<table class="w-full text-left text-xs border-collapse">
+<thead>
+<tr class="bg-[#1b1c20] text-ursa-textSecondary border-b border-ursa-border text-[11px]">
+<th class="py-2.5 px-4 w-10 text-center">
+<input checked="" class="rounded bg-[#25272c] border-ursa-border text-ursa-accent focus:ring-0 focus:ring-offset-0 cursor-pointer" type="checkbox">
+</th>
+<th class="py-2.5 px-3 w-12 text-center">序号</th>
+<th class="py-2.5 px-4">视频信息 (标题 / 作者 / 时长)</th>
+<th class="py-2.5 px-3 w-32 whitespace-nowrap">清晰度 / 格式</th>
+<th class="py-2.5 px-3 w-36">当前状态</th>
+<th class="py-2.5 px-4 w-64">下载进度与实时速度</th>
+<th class="py-2.5 px-3 w-24">大小</th>
+<th class="py-2.5 px-4 w-48 min-w-[180px] text-center font-medium text-ursa-textPrimary whitespace-nowrap">操作控制</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-ursa-borderSubtle">
+<!-- Row 1: Downloading Item -->
+<tr class="hover:bg-ursa-cardHover transition-colors">
+<td class="py-3 px-4 text-center">
+<input checked="" class="rounded bg-[#25272c] border-ursa-border text-ursa-accent focus:ring-0 focus:ring-offset-0 cursor-pointer" type="checkbox">
+</td>
+<td class="py-3 px-3 text-center text-ursa-textMuted font-mono">01</td>
+<td class="py-3 px-4">
+<div class="flex items-center space-x-3">
+<!-- Video Thumbnail with Duration Badge -->
+<div class="relative w-16 h-10 rounded bg-[#18191c] border border-ursa-border overflow-hidden flex-shrink-0 flex items-center justify-center">
+<div class="absolute inset-0 bg-gradient-to-tr from-blue-950/50 to-indigo-900/40"></div>
+<svg class="w-5 h-5 text-ursa-accent opacity-80" fill="currentColor" viewBox="0 0 24 24">
+<path d="M8 5v14l11-7z"></path>
+</svg>
+<span class="absolute bottom-0.5 right-1 bg-black/80 px-1 py-0.2 rounded text-[9px] font-mono text-white">04:32</span>
+</div>
+<div>
+<div class="font-medium text-ursa-textPrimary hover:text-ursa-accent cursor-pointer line-clamp-1">
+                        2024最新广场舞《苹果香》正反面教学分解动作全套
+                      </div>
+<div class="text-[11px] text-ursa-textMuted flex items-center space-x-2 mt-0.5">
+<span class="">青青水韵舞队</span>
+<span class="">•</span>
+<span class="font-mono text-ursa-textSecondary">td_9823412</span>
+</div>
+</div>
+</div>
+</td>
+<td class="py-3 px-3 whitespace-nowrap"><span class="tag-blue px-2.5 py-0.5 rounded text-[10px] font-mono font-medium whitespace-nowrap">1080P · MP4</span></td>
+<td class="py-3 px-3 whitespace-nowrap"><span class="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded text-[11px] tag-blue"><span class="w-1.5 h-1.5 rounded-full bg-ursa-accent animate-ping"></span><span class="font-mono font-medium">3.8 MB/s</span></span></td>
+<td class="py-3 px-4">
+<div>
+<div class="flex justify-between items-center text-[11px] mb-1">
+<span class="font-semibold text-ursa-accent font-mono">72%</span>
+<span class="text-ursa-textMuted text-[10px] font-mono">剩余 5s</span>
+</div>
+<!-- Ursa Progress Track -->
+<div class="w-full bg-[#18191d] rounded-full h-1.5 overflow-hidden">
+<div class="bg-ursa-accent h-1.5 rounded-full" style="width: 72%"></div>
+</div>
+<div class="text-[10px] text-ursa-textMuted font-mono mt-1">46.4 MB / 64.5 MB</div>
+</div>
+</td>
+<td class="py-3 px-3 font-mono text-ursa-textPrimary">64.5 MB</td>
+<!-- Action Controls Column (Fully visible on far right) -->
+<td class="py-3 px-4 text-center whitespace-nowrap"><div class="flex flex-row items-center justify-center gap-2 whitespace-nowrap"><button class="px-3 py-1 rounded bg-[#2d291e] hover:bg-[#3a3424] text-[#ffaa2b] border border-[#524121] text-xs flex items-center space-x-1 transition-colors flex-shrink-0"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M10 9v6m4-6v6" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg><span class="">暂停</span></button><button class="px-3 py-1 rounded bg-ursa-dangerBg hover:bg-[#3d2024] text-[#ff6464] border border-[#59272b] text-xs flex items-center space-x-1 transition-colors flex-shrink-0"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg><span class="">取消</span></button></div></td>
+</tr>
+<!-- Row 2: Finished Item -->
+<tr class="hover:bg-ursa-cardHover transition-colors bg-[#191b1f]/40">
+<td class="py-3 px-4 text-center">
+<input class="rounded bg-[#25272c] border-ursa-border text-ursa-accent focus:ring-0 focus:ring-offset-0 cursor-pointer" type="checkbox">
+</td>
+<td class="py-3 px-3 text-center text-ursa-textMuted font-mono">02</td>
+<td class="py-3 px-4">
+<div class="flex items-center space-x-3">
+<div class="relative w-16 h-10 rounded bg-[#18191c] border border-ursa-border overflow-hidden flex-shrink-0 flex items-center justify-center">
+<div class="absolute inset-0 bg-gradient-to-tr from-emerald-950/50 to-teal-900/40"></div>
+<svg class="w-5 h-5 text-emerald-400 opacity-80" fill="currentColor" viewBox="0 0 24 24">
+<path d="M8 5v14l11-7z"></path>
+</svg>
+<span class="absolute bottom-0.5 right-1 bg-black/80 px-1 py-0.2 rounded text-[9px] font-mono text-white">12:15</span>
+</div>
+<div>
+<div class="font-medium text-ursa-textPrimary hover:text-ursa-accent cursor-pointer line-clamp-1">
+                        动感鬼步舞基础入门零基础慢速教学
+                      </div>
+<div class="text-[11px] text-ursa-textMuted flex items-center space-x-2 mt-0.5">
+<span class="">炫舞部落阿龙</span>
+<span class="">•</span>
+<span class="font-mono text-ursa-textSecondary">td_8721990</span>
+</div>
+</div>
+</div>
+</td>
+<td class="py-3 px-3 whitespace-nowrap"><span class="tag-blue px-2.5 py-0.5 rounded text-[10px] font-mono font-medium whitespace-nowrap">1080P · MP4</span></td>
+<td class="py-3 px-3 whitespace-nowrap"><span class="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded text-[11px] tag-green whitespace-nowrap"><svg class="w-3 h-3 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg><span class="">已完成</span></span></td>
+<td class="py-3 px-4">
+<div>
+<div class="flex justify-between items-center text-[11px] mb-1">
+<span class="font-semibold text-ursa-success font-mono">100%</span>
+<span class="text-ursa-success text-[10px] flex items-center space-x-0.5">
+<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+<span class="">校验通过</span>
+</span>
+</div>
+<div class="w-full bg-[#18191d] rounded-full h-1.5 overflow-hidden">
+<div class="bg-ursa-success h-1.5 rounded-full" style="width: 100%"></div>
+</div>
+<div class="text-[10px] text-ursa-textMuted font-mono mt-1">128.0 MB · 耗时 34s</div>
+</div>
+</td>
+<td class="py-3 px-3 font-mono text-ursa-textPrimary">128.0 MB</td>
+<!-- Action Controls Column -->
+<td class="py-3 px-4 text-center whitespace-nowrap"><div class="flex flex-row items-center justify-center gap-2 whitespace-nowrap"><button class="px-3 py-1 rounded bg-ursa-accent hover:bg-ursa-accentHover text-white text-xs flex items-center space-x-1 transition-colors flex-shrink-0"><svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"></path></svg><span class="">播放</span></button><button class="px-3 py-1 rounded bg-[#2b2d34] hover:bg-[#373942] text-ursa-textPrimary border border-ursa-border text-xs flex items-center space-x-1 transition-colors flex-shrink-0"><svg class="w-3 h-3 text-ursa-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg><span class="">目录</span></button></div></td>
+</tr>
+<!-- Row 3: Queued Item -->
+<tr class="hover:bg-ursa-cardHover transition-colors">
+<td class="py-3 px-4 text-center">
+<input checked="" class="rounded bg-[#25272c] border-ursa-border text-ursa-accent focus:ring-0 focus:ring-offset-0 cursor-pointer" type="checkbox">
+</td>
+<td class="py-3 px-3 text-center text-ursa-textMuted font-mono">03</td>
+<td class="py-3 px-4">
+<div class="flex items-center space-x-3">
+<div class="relative w-16 h-10 rounded bg-[#18191c] border border-ursa-border overflow-hidden flex-shrink-0 flex items-center justify-center">
+<div class="absolute inset-0 bg-gradient-to-tr from-purple-950/50 to-slate-900/40"></div>
+<svg class="w-5 h-5 text-purple-400 opacity-80" fill="currentColor" viewBox="0 0 24 24">
+<path d="M8 5v14l11-7z"></path>
+</svg>
+<span class="absolute bottom-0.5 right-1 bg-black/80 px-1 py-0.2 rounded text-[9px] font-mono text-white">31:08</span>
+</div>
+<div>
+<div class="font-medium text-ursa-textPrimary hover:text-ursa-accent cursor-pointer line-clamp-1">
+                        健身操全身燃脂30分钟早晨晨练完整版
+                      </div>
+<div class="text-[11px] text-ursa-textMuted flex items-center space-x-2 mt-0.5">
+<span class="">健康天天乐健身堂</span>
+<span class="">•</span>
+<span class="font-mono text-ursa-textSecondary">td_6512349</span>
+</div>
+</div>
+</div>
+</td>
+<td class="py-3 px-3 whitespace-nowrap"><span class="tag-gray px-2.5 py-0.5 rounded text-[10px] font-mono font-medium whitespace-nowrap">720P · MP4</span></td>
+<td class="py-3 px-3 whitespace-nowrap"><span class="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded text-[11px] tag-gray whitespace-nowrap"><span class="w-1.5 h-1.5 rounded-full bg-ursa-textMuted"></span><span class="">排队中</span></span></td>
+<td class="py-3 px-4">
+<div>
+<div class="flex justify-between items-center text-[11px] mb-1">
+<span class="font-semibold text-ursa-textMuted font-mono">0%</span>
+<span class="text-ursa-textMuted text-[10px]">等待前置任务</span>
+</div>
+<div class="w-full bg-[#18191d] rounded-full h-1.5 overflow-hidden">
+<div class="bg-gray-600 h-1.5 rounded-full" style="width: 0%"></div>
+</div>
+<div class="text-[10px] text-ursa-textMuted font-mono mt-1">0 MB / 89.2 MB</div>
+</div>
+</td>
+<td class="py-3 px-3 font-mono text-ursa-textPrimary">89.2 MB</td>
+<!-- Action Controls Column -->
+<td class="py-3 px-4 text-center whitespace-nowrap"><div class="flex flex-row items-center justify-center gap-2 whitespace-nowrap"><button class="px-3 py-1 rounded bg-[#202738] hover:bg-[#2a344c] text-[#6aa1ff] border border-[#2b4474] text-xs flex items-center space-x-1 transition-colors flex-shrink-0"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M5 10l7-7m0 0l7 7m-7-7v18" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg><span class="">优先</span></button><button class="px-3 py-1 rounded bg-ursa-dangerBg hover:bg-[#3d2024] text-[#ff6464] border border-[#59272b] text-xs flex items-center space-x-1 transition-colors flex-shrink-0"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg><span class="">移除</span></button></div></td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Table Ursa Pagination & Queue Footnote -->
+<div class="px-4 py-2 border-t border-ursa-border bg-[#1b1c20] flex items-center justify-between text-xs flex-wrap gap-2 text-ursa-textSecondary">
+<div class="flex items-center space-x-3 text-[11px]">
+<span class="">共 <strong class="text-ursa-textPrimary">3</strong> 个任务</span>
+<span class="text-ursa-border">|</span>
+<span class="">进行中: <strong class="text-ursa-accent">1</strong></span>
+<span class="text-ursa-border">|</span>
+<span class="">已完成: <strong class="text-ursa-success">1</strong></span>
+<span class="text-ursa-border">|</span>
+<span class="">排队中: <strong class="text-ursa-warning">1</strong></span>
+<span class="text-ursa-border">|</span>
+<span class="">待下载总量: <span class="font-mono text-ursa-textPrimary">95.7 MB</span></span>
+</div>
+<!-- Ursa Avalonia Official Pagination Style -->
+<div class="flex items-center space-x-2 text-[11px]">
+<span class="">每页行数:</span>
+<div class="relative">
+<select class="bg-[#24252a] border border-ursa-border text-ursa-textPrimary rounded px-2 py-0.5 text-[11px] appearance-none pr-5 outline-none cursor-pointer">
+<option>10 条/页</option>
+<option>20 条/页</option>
+<option>50 条/页</option>
+</select>
+<div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-1 text-ursa-textMuted">
+<svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</div>
+</div>
+<!-- Page Buttons -->
+<div class="flex items-center space-x-1">
+<button class="w-6 h-6 rounded bg-[#24252a] border border-ursa-border flex items-center justify-center text-ursa-textMuted hover:text-white">
+<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</button>
+<button class="w-6 h-6 rounded bg-ursa-accent text-white font-medium flex items-center justify-center">1</button>
+<button class="w-6 h-6 rounded bg-[#24252a] border border-ursa-border flex items-center justify-center text-ursa-textSecondary hover:text-white">2</button>
+<button class="w-6 h-6 rounded bg-[#24252a] border border-ursa-border flex items-center justify-center text-ursa-textSecondary hover:text-white">3</button>
+<button class="w-6 h-6 rounded bg-[#24252a] border border-ursa-border flex items-center justify-center text-ursa-textMuted hover:text-white">
+<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</button>
+</div>
+</div>
+</div>
+</section>
+<!-- END: TaskTableCard -->
+<!-- BEGIN: BottomDashboardMetrics -->
+<section class="grid grid-cols-1 md:grid-cols-3 gap-3" data-purpose="metrics-summary">
+<!-- Metric 1: Download Speed -->
+<div class="bg-ursa-card border border-ursa-border rounded-md p-3 flex items-center justify-between shadow-sm">
+<div class="flex items-center space-x-3">
+<div class="w-9 h-9 rounded bg-[#232a3d] text-ursa-accent flex items-center justify-center">
+<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M13 10V3L4 14h7v7l9-11h-7z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</div>
+<div>
+<div class="text-[11px] text-ursa-textMuted">实时下载总速率</div>
+<div class="text-sm font-semibold font-mono text-ursa-textPrimary">3.82 MB/s</div>
+</div>
+</div>
+<!-- Mini Bar visualizer -->
+<div class="flex items-end space-x-1 h-6">
+<div class="w-1.5 bg-ursa-accent/40 rounded-t h-2"></div>
+<div class="w-1.5 bg-ursa-accent/60 rounded-t h-4"></div>
+<div class="w-1.5 bg-ursa-accent/80 rounded-t h-3"></div>
+<div class="w-1.5 bg-ursa-accent rounded-t h-6 animate-pulse"></div>
+<div class="w-1.5 bg-ursa-accent/90 rounded-t h-5"></div>
+</div>
+</div>
+<!-- Metric 2: Storage Free -->
+<div class="bg-ursa-card border border-ursa-border rounded-md p-3 flex items-center justify-between shadow-sm">
+<div class="flex items-center space-x-3">
+<div class="w-9 h-9 rounded bg-[#203227] text-ursa-success flex items-center justify-center">
+<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</div>
+<div>
+<div class="text-[11px] text-ursa-textMuted">保存磁盘剩余空间 (D:)</div>
+<div class="text-sm font-semibold font-mono text-ursa-textPrimary">248.6 GB <span class="text-xs font-normal text-ursa-textMuted">/ 512 GB</span></div>
+</div>
+</div>
+<span class="tag-green px-2 py-0.5 rounded text-[11px] font-mono">51% 可用</span>
+</div>
+<!-- Metric 3: Thread Pool -->
+<div class="bg-ursa-card border border-ursa-border rounded-md p-3 flex items-center justify-between shadow-sm">
+<div class="flex items-center space-x-3">
+<div class="w-9 h-9 rounded bg-[#2e263c] text-purple-400 flex items-center justify-center">
+<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</div>
+<div>
+<div class="text-[11px] text-ursa-textMuted">工作线程运行池</div>
+<div class="text-sm font-semibold text-ursa-textPrimary">4 线程分配中 <span class="text-xs font-mono text-ursa-accent">(活跃 1)</span></div>
+</div>
+</div>
+<span class="tag-gray px-2 py-0.5 rounded text-[11px]">调度模式: 智能</span>
+</div>
+</section>
+<!-- END: BottomDashboardMetrics -->
+</main>
+<!-- END: MainContentBody -->
+<!-- BEGIN: RefinedUrsaStatusBar -->
+<footer class="h-7 bg-ursa-window border-t border-ursa-border px-3.5 flex items-center justify-between text-[11px] text-ursa-textSecondary select-none" data-purpose="ursa-official-status-bar">
+<!-- Left status items -->
+<div class="flex items-center space-x-3">
+<div class="flex items-center space-x-1.5">
+<span class="w-2 h-2 rounded-full bg-ursa-success"></span>
+<span class="font-mono text-ursa-textPrimary">Ready - Ready to fetch</span>
+</div>
+<span class="text-ursa-border">|</span>
+<span class="text-ursa-textMuted">Core: Avalonia 11.2 (Ursa Controls 1.4.0)</span>
+<span class="text-ursa-border">|</span>
+<span class="text-ursa-textMuted">编码格式: MP4(H.264+AAC)</span>
+</div>
+<!-- Right status items -->
+<div class="flex items-center space-x-4">
+<span class="hover:text-ursa-textPrimary cursor-pointer">使用说明</span>
+<span class="hover:text-ursa-textPrimary cursor-pointer">检查更新</span>
+<span class="hover:text-ursa-textPrimary cursor-pointer">开源项目</span>
+<span class="text-ursa-border">|</span>
+<span class="font-mono text-ursa-textMuted">Encoding: UTF-8</span>
+<span class="font-mono text-ursa-textMuted">Storage: 412.8 GB Free</span>
+</div>
+</footer>
+<!-- END: RefinedUrsaStatusBar -->
+</div>
+<!-- END: UrsaDesktopWindowWrapper -->
+
+
+</body></html>
