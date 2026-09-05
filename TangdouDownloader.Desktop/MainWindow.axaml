@@ -9,139 +9,460 @@
                  WindowStartupLocation="CenterScreen"
                  IsFullScreenButtonVisible="{OnPlatform {x:True}, macOS={x:False}}"
                  IsManagedResizerVisible="{OnPlatform {x:False}, Linux={x:True}}">
-  <ursa:UrsaWindow.TitleBarContent>
-    <StackPanel Orientation="Horizontal" Spacing="8" Margin="12,0,0,0">
-      <Image Source="avares://TangdouDownloader.Desktop/Assets/logo.ico" Width="20" Height="20" Stretch="Uniform" />
-      <ursa:Breadcrumb IsHitTestVisible="False">
-        <ursa:BreadcrumbItem Content="糖豆视频下载工具" IsReadOnly="True" />
-      </ursa:Breadcrumb>
-    </StackPanel>
-  </ursa:UrsaWindow.TitleBarContent>
-  <ursa:UrsaWindow.RightContent>
-    <StackPanel Orientation="Horizontal">
-      <ursa:IconButton Theme="{StaticResource BorderlessIconButton}"
-                       Classes="Tertiary"
-                       Icon="{StaticResource SemiIconGithubLogo}"
-                       ToolTip.Tip="打开 GitHub 仓库"
-                       Command="{Binding OpenGithubCommand}" />
-      <ursa:ThemeToggleButton IsThreeState="True" Mode="Controller" />
-    </StackPanel>
-  </ursa:UrsaWindow.RightContent>
-  <Grid Margin="0,36,0,0" RowDefinitions="Auto,*,Auto" Background="{DynamicResource SemiColorBgDefault}">
-    <Border Grid.Row="0" Background="{DynamicResource SemiColorFill0}" BorderBrush="{DynamicResource SemiColorBorder}" BorderThickness="0,0,0,1" Padding="20,8">
-      <StackPanel Orientation="Horizontal" Spacing="8">
-        <Button Classes="nav-button" Classes.selected="{Binding IsDownloadsSelected}" Command="{Binding ShowDownloadsCommand}"><StackPanel Orientation="Horizontal" Spacing="7"><TextBlock Text="⇩" FontSize="15" /><TextBlock Text="下载任务" /></StackPanel></Button>
-        <Button Classes="nav-button" Classes.selected="{Binding IsHistorySelected}" Command="{Binding ShowHistoryCommand}"><StackPanel Orientation="Horizontal" Spacing="7"><TextBlock Text="◷" FontSize="15" /><TextBlock Text="历史记录" /></StackPanel></Button>
-      </StackPanel>
-    </Border>
-    <Grid Grid.Row="1">
-      <Grid Margin="20" RowDefinitions="Auto,*,Auto" RowSpacing="16" IsVisible="{Binding IsDownloadPage}">
-        <Border Grid.Row="0" Classes="panel" Padding="16"><Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="12">
-          <Grid ColumnDefinitions="*,Auto"><StackPanel Orientation="Horizontal" Spacing="8"><TextBlock Text="⌁" Foreground="{DynamicResource SemiColorPrimary}" FontSize="16" VerticalAlignment="Center" /><TextBlock Text="添加糖豆视频下载链接" FontWeight="SemiBold" VerticalAlignment="Center" /><TextBlock Text="支持批量输入，每行一条" Foreground="{DynamicResource SemiColorText2}" FontSize="11" VerticalAlignment="Center" /></StackPanel><Button Grid.Column="1" Classes="icon-button" Command="{Binding PasteClipboardCommand}"><StackPanel Orientation="Horizontal" Spacing="6"><TextBlock Text="▣" Foreground="{DynamicResource SemiColorPrimary}" /><TextBlock Text="从剪贴板粘贴" /></StackPanel></Button></Grid>
-          <Grid Grid.Row="1"><TextBox Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" Height="94" MinHeight="94" MaxHeight="94" FontFamily="Consolas, JetBrains Mono, monospace" VerticalContentAlignment="Top" PlaceholderText="粘贴糖豆链接或 VID" /><Border Classes="input-summary" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,10,9" CornerRadius="4" Padding="7,3"><StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center"><TextBlock Text="已识别" Foreground="{DynamicResource SemiColorText2}" FontSize="11" VerticalAlignment="Center" /><TextBlock Text="{Binding RecognizedCount}" Foreground="{DynamicResource SemiColorPrimary}" FontWeight="SemiBold" FontSize="11" VerticalAlignment="Center" /><TextBlock Text="条" Foreground="{DynamicResource SemiColorText2}" FontSize="11" VerticalAlignment="Center" /><Button Content="×" Theme="{DynamicResource BorderlessIconButton}" ToolTip.Tip="清空输入" Command="{Binding ClearInputCommand}" Width="20" Height="20" MinWidth="20" MinHeight="20" MaxWidth="20" MaxHeight="20" Padding="0" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" Foreground="{DynamicResource SemiColorText2}" /></StackPanel></Border></Grid>
-        <Grid Grid.Row="2" ColumnDefinitions="*,Auto" ColumnSpacing="12"><WrapPanel ItemHeight="34" VerticalAlignment="Center"><StackPanel Orientation="Horizontal" Spacing="7" Margin="0,0,16,0"><TextBlock Text="清晰度" Foreground="{DynamicResource SemiColorText2}" VerticalAlignment="Center" /><ComboBox ItemsSource="{Binding Qualities}" SelectedItem="{Binding SelectedQuality}" Width="162" /></StackPanel><StackPanel Orientation="Horizontal" Spacing="7" Margin="0,0,16,0"><TextBlock Text="并发调度" Foreground="{DynamicResource SemiColorText2}" VerticalAlignment="Center" /><ComboBox ItemsSource="{Binding ConcurrencyOptions}" SelectedItem="{Binding SelectedConcurrency}" Width="160" /></StackPanel><StackPanel Orientation="Horizontal" Spacing="7"><TextBlock Text="保存目录" Foreground="{DynamicResource SemiColorText2}" VerticalAlignment="Center" /><TextBox Text="{Binding DownloadDirectory}" Width="188" /><Button Classes="icon-button" Theme="{DynamicResource BorderlessIconButton}" Command="{Binding BrowseDirectoryCommand}"><StackPanel Orientation="Horizontal" Spacing="5"><TextBlock Text="▰" Foreground="{DynamicResource SemiColorPrimary}" /><TextBlock Text="浏览" /></StackPanel></Button></StackPanel></WrapPanel><StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="9" VerticalAlignment="Center"><Button Classes="Primary icon-button" Theme="{DynamicResource SolidButton}" Command="{Binding ResolveCommand}"><StackPanel Orientation="Horizontal" Spacing="6"><TextBlock Text="＋" FontSize="15" /><TextBlock Text="解析并加入队列" /></StackPanel></Button><Button Classes="Danger icon-button" Theme="{DynamicResource SolidButton}" Command="{Binding DeleteSelectedCommand}"><StackPanel Orientation="Horizontal" Spacing="6"><TextBlock Text="🗑" /><TextBlock Text="删除选中" /></StackPanel></Button><Button Classes="Warning icon-button" Theme="{DynamicResource SolidButton}" Command="{Binding PauseAllCommand}"><StackPanel Orientation="Horizontal" Spacing="6"><TextBlock Text="⏸" /><TextBlock Text="暂停全部" /></StackPanel></Button><Button Classes="Primary icon-button" Theme="{DynamicResource SolidButton}" Command="{Binding StartAllCommand}"><StackPanel Orientation="Horizontal" Spacing="6"><TextBlock Text="▶" /><TextBlock Text="全部开始下载" /></StackPanel></Button></StackPanel></Grid>
-        </Grid></Border>
-<Border Grid.Row="1" Classes="panel" MinHeight="0">
-  <Grid RowDefinitions="Auto,*,Auto">
-    <Grid Margin="16,14" ColumnDefinitions="*,Auto">
-      <StackPanel Orientation="Horizontal" Spacing="8">
-        <TextBlock Text="☰ 任务列表" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,4,0" />
-        <Button Classes="task-filter" Classes.selected="{Binding IsAllFilterSelected}" Content="{Binding AllTaskLabel}" Command="{Binding FilterAllCommand}" />
-        <Button Classes="task-filter" Classes.selected="{Binding IsDownloadingFilterSelected}" Content="下载中" Command="{Binding FilterDownloadingCommand}" />
-        <Button Classes="task-filter" Classes.selected="{Binding IsCompletedFilterSelected}" Content="已完成" Command="{Binding FilterCompletedCommand}" />
-        <Button Classes="task-filter" Classes.selected="{Binding IsQueuedFilterSelected}" Content="排队中" Command="{Binding FilterQueuedCommand}" />
-      </StackPanel>
-      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="7">
-        <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Width="230" PlaceholderText="检索标题或 VID..." />
-        <Button Classes="icon-button" Theme="{DynamicResource BorderlessIconButton}" Width="32" Height="32" ToolTip.Tip="刷新任务状态" Command="{Binding RefreshCommand}" Padding="0" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"><TextBlock Text="↻" FontSize="16" HorizontalAlignment="Center" VerticalAlignment="Center" /></Button>
-      </StackPanel>
-    </Grid>
-    <DataGrid Grid.Row="1" ItemsSource="{Binding FilteredItems}" AutoGenerateColumns="False" IsReadOnly="True" Focusable="False" SelectionMode="Single" CanUserResizeColumns="False" CanUserSortColumns="False" CanUserReorderColumns="False" BeginningEdit="OnTaskGridBeginningEdit" MinHeight="0" BorderThickness="0,1,0,1" BorderBrush="{DynamicResource SemiColorBorder}" ScrollViewer.VerticalScrollBarVisibility="Auto">
-      <DataGrid.Columns>
-        <DataGridTemplateColumn Width="64">
-          <DataGridTemplateColumn.HeaderTemplate><DataTemplate><Grid Width="40" Height="32" HorizontalAlignment="Center"><CheckBox IsChecked="{Binding DataContext.IsAllTasksSelected, RelativeSource={RelativeSource AncestorType=DataGrid}, Mode=TwoWay}" Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center" /></Grid></DataTemplate></DataGridTemplateColumn.HeaderTemplate>
-          <DataGridTemplateColumn.CellTemplate><DataTemplate><CheckBox IsChecked="{Binding IsSelected}" Focusable="False" IsTabStop="False" HorizontalAlignment="Center" VerticalAlignment="Center" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
-        </DataGridTemplateColumn>
-        <DataGridTextColumn Header="序号" Binding="{Binding Order}" Width="72" />
-        <DataGridTemplateColumn Header="视频信息（标题 / VID）" Width="2*">
-          <DataGridTemplateColumn.CellTemplate><DataTemplate>
-            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-              <Border Width="84" Height="52" Background="{DynamicResource SemiColorFill0}" BorderBrush="{DynamicResource SemiColorBorder}" BorderThickness="1" CornerRadius="8" ClipToBounds="True">
-                <Panel>
-                  <Image Source="{Binding CoverImage}" Stretch="UniformToFill" IsVisible="{Binding HasCoverImage}" />
-                  <TextBlock Text="▶" Foreground="{DynamicResource SemiColorPrimary}" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding ShowCoverPlaceholder}" />
-                </Panel>
-              </Border>
-                <StackPanel Spacing="3" VerticalAlignment="Center" MinWidth="140">
-                <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="320" />
-                <StackPanel Orientation="Horizontal" Spacing="3"><TextBlock Text="VID：" Foreground="{DynamicResource SemiColorText2}" FontSize="11" /><TextBlock Text="{Binding Vid}" Foreground="{DynamicResource SemiColorText2}" FontFamily="Consolas" FontSize="11" /></StackPanel>
-              </StackPanel>
+    <ursa:UrsaWindow.TitleBarContent>
+        <StackPanel Orientation="Horizontal" Spacing="8" Margin="12,0,0,0">
+            <Image Source="avares://TangdouDownloader.Desktop/Assets/logo.ico" Width="20" Height="20" Stretch="Uniform" />
+            <ursa:Breadcrumb IsHitTestVisible="False">
+                <ursa:BreadcrumbItem Content="糖豆视频下载工具" IsReadOnly="True" />
+            </ursa:Breadcrumb>
+        </StackPanel>
+    </ursa:UrsaWindow.TitleBarContent>
+    <ursa:UrsaWindow.RightContent>
+        <StackPanel Orientation="Horizontal">
+            <ursa:IconButton Theme="{StaticResource BorderlessIconButton}"
+                             Classes="Tertiary"
+                             Icon="{StaticResource SemiIconGithubLogo}"
+                             ToolTip.Tip="打开 GitHub 仓库"
+                             Command="{Binding OpenGithubCommand}" />
+            <ursa:ThemeToggleButton IsThreeState="True" Mode="Controller" />
+        </StackPanel>
+    </ursa:UrsaWindow.RightContent>
+    <Grid Margin="0,36,0,0" RowDefinitions="Auto,*,Auto" Background="{DynamicResource SemiColorBgDefault}">
+        <Border Grid.Row="0" Background="{DynamicResource SemiColorFill0}"
+                BorderBrush="{DynamicResource SemiColorBorder}" BorderThickness="0,0,0,1" Padding="20,8">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Classes="nav-button" Classes.selected="{Binding IsDownloadsSelected}"
+                        Command="{Binding ShowDownloadsCommand}">
+                    <StackPanel Orientation="Horizontal" Spacing="7">
+                        <TextBlock Text="⇩" FontSize="15" /><TextBlock Text="下载任务" />
+                    </StackPanel>
+                </Button>
+                <Button Classes="nav-button" Classes.selected="{Binding IsHistorySelected}"
+                        Command="{Binding ShowHistoryCommand}">
+                    <StackPanel Orientation="Horizontal" Spacing="7">
+                        <TextBlock Text="◷" FontSize="15" /><TextBlock Text="历史记录" />
+                    </StackPanel>
+                </Button>
             </StackPanel>
-          </DataTemplate></DataGridTemplateColumn.CellTemplate>
-        </DataGridTemplateColumn>
-        <DataGridTemplateColumn Header="清晰度 / 格式" Width="130">
-          <DataGridTemplateColumn.CellTemplate><DataTemplate><Border Classes="quality-tag" CornerRadius="4" Padding="7,2" Height="24" MinHeight="24" MaxHeight="24" VerticalAlignment="Center" HorizontalAlignment="Center"><TextBlock Text="{Binding QualityFormat}" Foreground="{DynamicResource SemiColorPrimary}" FontSize="11" VerticalAlignment="Center" /></Border></DataTemplate></DataGridTemplateColumn.CellTemplate>
-        </DataGridTemplateColumn>
-        <DataGridTemplateColumn Header="当前状态" Width="110">
-          <DataGridTemplateColumn.CellTemplate><DataTemplate>
-            <Border Classes="status-tag" Classes.downloading="{Binding IsDownloading}" Classes.completed="{Binding IsCompleted}" Classes.paused="{Binding IsPaused}" Classes.failed="{Binding IsFailed}" CornerRadius="4" Padding="7,2" Height="24" MinHeight="24" MaxHeight="24" VerticalAlignment="Center" HorizontalAlignment="Center">
-              <StackPanel Orientation="Horizontal" Spacing="4">
-                <TextBlock Classes="status-icon" Classes.downloading="{Binding IsDownloading}" Classes.completed="{Binding IsCompleted}" Classes.paused="{Binding IsPaused}" Classes.failed="{Binding IsFailed}" Text="{Binding StatusIcon}" FontWeight="Bold" FontSize="11" />
-                <TextBlock Classes="status-text" Classes.downloading="{Binding IsDownloading}" Classes.completed="{Binding IsCompleted}" Classes.paused="{Binding IsPaused}" Classes.failed="{Binding IsFailed}" Text="{Binding Status}" FontSize="11" />
-              </StackPanel>
+        </Border>
+        <Grid Grid.Row="1">
+            <Grid Margin="20" RowDefinitions="Auto,*,Auto" RowSpacing="16" IsVisible="{Binding IsDownloadPage}">
+                <Border Grid.Row="0" Classes="panel" Padding="16">
+                    <Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="12">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Text="⌁" Foreground="{DynamicResource SemiColorPrimary}" FontSize="16"
+                                           VerticalAlignment="Center" />
+                                <TextBlock Text="添加糖豆视频下载链接" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <TextBlock Text="支持批量输入，每行一条" Foreground="{DynamicResource SemiColorText2}"
+                                           FontSize="11" VerticalAlignment="Center" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Classes="icon-button" Command="{Binding PasteClipboardCommand}">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock Text="▣" Foreground="{DynamicResource SemiColorPrimary}" />
+                                    <TextBlock Text="从剪贴板粘贴" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                        <Grid Grid.Row="1">
+                            <TextBox Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}"
+                                     AcceptsReturn="True" TextWrapping="Wrap" Height="94" MinHeight="94" MaxHeight="94"
+                                     FontFamily="Consolas, JetBrains Mono, monospace" VerticalContentAlignment="Top"
+                                     PlaceholderText="粘贴糖豆链接或 VID" />
+                            <Border Classes="input-summary" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                    Margin="0,0,10,9" CornerRadius="4" Padding="7,3">
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                    <TextBlock Text="已识别" Foreground="{DynamicResource SemiColorText2}" FontSize="11"
+                                               VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding RecognizedCount}"
+                                               Foreground="{DynamicResource SemiColorPrimary}" FontWeight="SemiBold"
+                                               FontSize="11" VerticalAlignment="Center" />
+                                    <TextBlock Text="条" Foreground="{DynamicResource SemiColorText2}" FontSize="11"
+                                               VerticalAlignment="Center" />
+                                    <Button Content="×" Theme="{DynamicResource BorderlessIconButton}"
+                                            ToolTip.Tip="清空输入" Command="{Binding ClearInputCommand}" Width="20"
+                                            Height="20" MinWidth="20" MinHeight="20" MaxWidth="20" MaxHeight="20"
+                                            Padding="0" HorizontalContentAlignment="Center"
+                                            VerticalContentAlignment="Center"
+                                            Foreground="{DynamicResource SemiColorText2}" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                        <Grid Grid.Row="2" ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                            <WrapPanel ItemHeight="34" VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal" Spacing="7" Margin="0,0,16,0">
+                                    <TextBlock Text="清晰度" Foreground="{DynamicResource SemiColorText2}"
+                                               VerticalAlignment="Center" />
+                                    <ComboBox ItemsSource="{Binding Qualities}"
+                                              SelectedItem="{Binding SelectedQuality}" Width="92" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="7" Margin="0,0,16,0">
+                                    <TextBlock Text="同时下载数" Foreground="{DynamicResource SemiColorText2}"
+                                               VerticalAlignment="Center" />
+                                    <ComboBox ItemsSource="{Binding ConcurrencyOptions}"
+                                              SelectedItem="{Binding SelectedConcurrency}" Width="72" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="7" Margin="0,0,16,0">
+                                    <TextBlock Text="下载线程" Foreground="{DynamicResource SemiColorText2}"
+                                               VerticalAlignment="Center"
+                                               ToolTip.Tip="单个视频的分片下载数；服务器支持 Range 时生效" />
+                                    <ComboBox ItemsSource="{Binding DownloadThreadOptions}"
+                                              SelectedItem="{Binding SelectedDownloadThreads}" Width="72"
+                                              ToolTip.Tip="单个视频的分片下载数；服务器支持 Range 时生效" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="7">
+                                    <TextBlock Text="保存目录" Foreground="{DynamicResource SemiColorText2}"
+                                               VerticalAlignment="Center" />
+                                    <TextBox Text="{Binding DownloadDirectory}" Width="188" />
+                                    <Button Classes="icon-button" Theme="{DynamicResource BorderlessIconButton}"
+                                            Command="{Binding BrowseDirectoryCommand}">
+                                        <StackPanel Orientation="Horizontal" Spacing="5">
+                                            <TextBlock Text="▰" Foreground="{DynamicResource SemiColorPrimary}" />
+                                            <TextBlock Text="浏览" />
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+                            </WrapPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
+                                <Button Classes="Primary icon-button" Theme="{DynamicResource SolidButton}"
+                                        Command="{Binding ResolveCommand}">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Text="＋" FontSize="15" /><TextBlock Text="解析并加入队列" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Classes="Danger icon-button" Theme="{DynamicResource SolidButton}"
+                                        Command="{Binding DeleteSelectedCommand}">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Text="×" /><TextBlock Text="删除选中" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Classes="Warning icon-button" Theme="{DynamicResource SolidButton}"
+                                        Command="{Binding PauseAllCommand}">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Text="⏸" /><TextBlock Text="暂停全部" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Classes="Primary icon-button" Theme="{DynamicResource SolidButton}"
+                                        Command="{Binding StartAllCommand}">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Text="▶" /><TextBlock Text="全部开始下载" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                </Border>
+                <Border Grid.Row="1" Classes="panel" MinHeight="0">
+                    <Grid RowDefinitions="Auto,*,Auto">
+                        <Grid Margin="16,14" ColumnDefinitions="*,Auto">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Text="☰ 任务列表" FontWeight="SemiBold" VerticalAlignment="Center"
+                                           Margin="0,0,4,0" />
+                                <Button Classes="task-filter" Classes.selected="{Binding IsAllFilterSelected}"
+                                        Content="{Binding AllTaskLabel}" Command="{Binding FilterAllCommand}" />
+                                <Button Classes="task-filter" Classes.selected="{Binding IsDownloadingFilterSelected}"
+                                        Content="下载中" Command="{Binding FilterDownloadingCommand}" />
+                                <Button Classes="task-filter" Classes.selected="{Binding IsCompletedFilterSelected}"
+                                        Content="已完成" Command="{Binding FilterCompletedCommand}" />
+                                <Button Classes="task-filter" Classes.selected="{Binding IsQueuedFilterSelected}"
+                                        Content="排队中" Command="{Binding FilterQueuedCommand}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="7">
+                                <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Width="230"
+                                         PlaceholderText="检索标题或 VID..." />
+                                <Button Classes="icon-button" Theme="{DynamicResource BorderlessIconButton}" Width="32"
+                                        Height="32" ToolTip.Tip="刷新任务状态" Command="{Binding RefreshCommand}" Padding="0"
+                                        HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
+                                    <TextBlock Text="↻" FontSize="16" HorizontalAlignment="Center"
+                                               VerticalAlignment="Center" />
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+                        <DataGrid Grid.Row="1" ItemsSource="{Binding FilteredItems}" AutoGenerateColumns="False"
+                                  IsReadOnly="True" Focusable="False" SelectionMode="Single"
+                                  CanUserResizeColumns="False" CanUserSortColumns="False" CanUserReorderColumns="False"
+                                  BeginningEdit="OnTaskGridBeginningEdit" MinHeight="0" BorderThickness="0,1,0,1"
+                                  BorderBrush="{DynamicResource SemiColorBorder}"
+                                  ScrollViewer.VerticalScrollBarVisibility="Auto">
+                            <DataGrid.Columns>
+                                <DataGridTemplateColumn Width="64">
+                                    <DataGridTemplateColumn.HeaderTemplate>
+                                        <DataTemplate>
+                                            <Grid Width="40" Height="32" HorizontalAlignment="Center">
+                                                <CheckBox
+                                                    IsChecked="{Binding DataContext.IsAllTasksSelected, RelativeSource={RelativeSource AncestorType=DataGrid}, Mode=TwoWay}"
+                                                    Width="18" Height="18" HorizontalAlignment="Center"
+                                                    VerticalAlignment="Center" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.HeaderTemplate>
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <CheckBox IsChecked="{Binding IsSelected}" Focusable="False"
+                                                      IsTabStop="False" HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center" />
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="序号" Binding="{Binding Order}" Width="72" />
+                                <DataGridTemplateColumn Header="视频信息（标题 / VID）" Width="2*">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal" Spacing="10"
+                                                        VerticalAlignment="Center">
+                                                <Border Width="84" Height="52"
+                                                        Background="{DynamicResource SemiColorFill0}"
+                                                        BorderBrush="{DynamicResource SemiColorBorder}"
+                                                        BorderThickness="1" CornerRadius="8" ClipToBounds="True">
+                                                    <Panel>
+                                                        <Image Source="{Binding CoverImage}" Stretch="UniformToFill"
+                                                               IsVisible="{Binding HasCoverImage}" />
+                                                        <TextBlock Text="▶"
+                                                                   Foreground="{DynamicResource SemiColorPrimary}"
+                                                                   FontSize="18" HorizontalAlignment="Center"
+                                                                   VerticalAlignment="Center"
+                                                                   IsVisible="{Binding ShowCoverPlaceholder}" />
+                                                    </Panel>
+                                                </Border>
+                                                <StackPanel Spacing="3" VerticalAlignment="Center" MinWidth="140">
+                                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold"
+                                                               TextTrimming="CharacterEllipsis" MaxWidth="320" />
+                                                    <StackPanel Orientation="Horizontal" Spacing="3">
+                                                        <TextBlock Text="VID："
+                                                                   Foreground="{DynamicResource SemiColorText2}"
+                                                                   FontSize="11" />
+                                                        <TextBlock Text="{Binding Vid}"
+                                                                   Foreground="{DynamicResource SemiColorText2}"
+                                                                   FontFamily="Consolas" FontSize="11" />
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="清晰度 / 格式" Width="130">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Border Classes="quality-tag" CornerRadius="4" Padding="7,2" Height="24"
+                                                    MinHeight="24" MaxHeight="24" VerticalAlignment="Center"
+                                                    HorizontalAlignment="Center">
+                                                <TextBlock Text="{Binding QualityFormat}"
+                                                           Foreground="{DynamicResource SemiColorPrimary}"
+                                                           FontSize="11" VerticalAlignment="Center" />
+                                            </Border>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="当前状态" Width="110">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Border Classes="status-tag" Classes.downloading="{Binding IsDownloading}"
+                                                    Classes.completed="{Binding IsCompleted}"
+                                                    Classes.paused="{Binding IsPaused}"
+                                                    Classes.failed="{Binding IsFailed}" CornerRadius="4" Padding="7,2"
+                                                    Height="24" MinHeight="24" MaxHeight="24"
+                                                    VerticalAlignment="Center" HorizontalAlignment="Center">
+                                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                                    <TextBlock Classes="status-icon"
+                                                               Classes.downloading="{Binding IsDownloading}"
+                                                               Classes.completed="{Binding IsCompleted}"
+                                                               Classes.paused="{Binding IsPaused}"
+                                                               Classes.failed="{Binding IsFailed}"
+                                                               Text="{Binding StatusIcon}" FontWeight="Bold"
+                                                               FontSize="11" />
+                                                    <TextBlock Classes="status-text"
+                                                               Classes.downloading="{Binding IsDownloading}"
+                                                               Classes.completed="{Binding IsCompleted}"
+                                                               Classes.paused="{Binding IsPaused}"
+                                                               Classes.failed="{Binding IsFailed}"
+                                                               Text="{Binding Status}" FontSize="11" />
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="下载进度与实时速度" Width="2*">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Spacing="4">
+                                                <Grid ColumnDefinitions="Auto,*">
+                                                    <TextBlock Text="{Binding ProgressLabel}"
+                                                               Foreground="{DynamicResource SemiColorPrimary}"
+                                                               FontWeight="SemiBold" FontSize="11" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding RemainingTime}"
+                                                               Foreground="{DynamicResource SemiColorText2}"
+                                                               HorizontalAlignment="Right" FontSize="11" />
+                                                </Grid>
+                                                <ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}" />
+                                                <TextBlock Text="{Binding TransferLabel}"
+                                                           Foreground="{DynamicResource SemiColorText2}" FontSize="10" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="大小" Binding="{Binding SizeLabel}" Width="95" />
+                                <DataGridTemplateColumn Header="操作控制" Width="240">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <Button Classes="Warning icon-button"
+                                                        Theme="{DynamicResource BorderlessIconButton}"
+                                                        ToolTip.Tip="暂停下载"
+                                                        Command="{Binding DataContext.PauseItemCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                        CommandParameter="{Binding}" IsVisible="{Binding CanPause}">
+                                                    <TextBlock Text="⏸" />
+                                                </Button>
+                                                <Button Classes="Primary icon-button"
+                                                        Theme="{DynamicResource BorderlessIconButton}"
+                                                        ToolTip.Tip="继续下载"
+                                                        Command="{Binding DataContext.ResumeItemCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                        CommandParameter="{Binding}" IsVisible="{Binding CanResume}">
+                                                    <TextBlock Text="▶" />
+                                                </Button>
+                                                <Button Classes="Warning icon-button"
+                                                        Theme="{DynamicResource BorderlessIconButton}"
+                                                        ToolTip.Tip="重试任务"
+                                                        Command="{Binding DataContext.RetryItemCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                        CommandParameter="{Binding}" IsVisible="{Binding CanRetry}">
+                                                    <TextBlock Text="↻" />
+                                                </Button>
+                                                <Button Classes="Danger icon-button"
+                                                        Theme="{DynamicResource BorderlessIconButton}"
+                                                        ToolTip.Tip="取消任务"
+                                                        Command="{Binding DataContext.CancelItemCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                        CommandParameter="{Binding}" IsVisible="{Binding CanCancel}">
+                                                    <TextBlock Text="×" />
+                                                </Button>
+                                                <Button Classes="Primary icon-button"
+                                                        Theme="{DynamicResource BorderlessIconButton}"
+                                                        ToolTip.Tip="播放视频"
+                                                        Command="{Binding DataContext.PlayItemCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                        CommandParameter="{Binding}" IsVisible="{Binding CanOpenFile}">
+                                                    <TextBlock Text="▶" />
+                                                </Button>
+                                                <Button Classes="icon-button"
+                                                        Theme="{DynamicResource BorderlessIconButton}"
+                                                        ToolTip.Tip="打开保存目录"
+                                                        Command="{Binding DataContext.OpenItemDirectoryCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                        CommandParameter="{Binding}" IsVisible="{Binding CanOpenFile}">
+                                                    <TextBlock Text="▰" />
+                                                </Button>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <Grid Grid.Row="2" Margin="16,11" ColumnDefinitions="*,Auto">
+                            <TextBlock Text="{Binding TaskSummary}" Foreground="{DynamicResource SemiColorText2}" />
+                            <TextBlock Grid.Column="1" Text="{Binding StatusMessage}"
+                                       Foreground="{DynamicResource SemiColorText2}" TextTrimming="CharacterEllipsis"
+                                       MaxWidth="480" />
+                        </Grid>
+                    </Grid>
+                </Border>
+                <Grid Grid.Row="2" ColumnDefinitions="*,*,*" ColumnSpacing="12">
+                    <Border Background="{DynamicResource SemiColorFill0}"
+                            BorderBrush="{DynamicResource SemiColorBorder}" BorderThickness="1" CornerRadius="8"
+                            Padding="12">
+                        <Grid ColumnDefinitions="40,*">
+                            <TextBlock Text="↯" Foreground="{DynamicResource SemiColorPrimary}" FontSize="22"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Spacing="3">
+                                <TextBlock Text="实时下载总速率" Foreground="{DynamicResource SemiColorText2}" FontSize="11" />
+                                <TextBlock Text="{Binding TotalSpeedLabel}" FontWeight="Bold" FontSize="15" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    <Border Grid.Column="1" Background="{DynamicResource SemiColorFill0}"
+                            BorderBrush="{DynamicResource SemiColorBorder}" BorderThickness="1" CornerRadius="8"
+                            Padding="12">
+                        <Grid ColumnDefinitions="40,*">
+                            <TextBlock Text="■" Foreground="{DynamicResource SemiColorSuccess}" FontSize="18"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Spacing="3">
+                                <TextBlock Text="可用磁盘空间" Foreground="{DynamicResource SemiColorText2}" FontSize="11" />
+                                <TextBlock Text="{Binding DiskFreeLabel}" FontWeight="Bold" FontSize="15" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    <Border Grid.Column="2" Background="{DynamicResource SemiColorFill0}"
+                            BorderBrush="{DynamicResource SemiColorBorder}" BorderThickness="1" CornerRadius="8"
+                            Padding="12">
+                        <Grid ColumnDefinitions="40,*">
+                            <TextBlock Text="≡" Foreground="{DynamicResource SemiColorTertiary}" FontSize="18"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Spacing="3">
+                                <TextBlock Text="工作线程池" Foreground="{DynamicResource SemiColorText2}" FontSize="11" />
+                                <TextBlock Text="{Binding WorkerPoolLabel}" FontWeight="Bold" FontSize="15" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Grid>
+            <Border Margin="20" Classes="panel" Padding="24" IsVisible="{Binding IsHistoryPage}">
+                <Grid RowDefinitions="Auto,*" RowSpacing="18">
+                    <StackPanel>
+                        <TextBlock Text="历史记录" FontSize="18" FontWeight="SemiBold" />
+                        <TextBlock Text="已完成的下载会保存在这里" Foreground="{DynamicResource SemiColorText2}" />
+                    </StackPanel>
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding HistoryItems}" AutoGenerateColumns="False"
+                              IsReadOnly="True" SelectionMode="Single" Focusable="False" CanUserResizeColumns="False"
+                              CanUserSortColumns="False" CanUserReorderColumns="False"
+                              BeginningEdit="OnTaskGridBeginningEdit" Classes="history-grid">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="完成时间" Binding="{Binding CompletedAtLabel}" Width="150" />
+                            <DataGridTextColumn Header="标题" Binding="{Binding Title}" Width="2*" />
+                            <DataGridTextColumn Header="VID" Binding="{Binding Vid}" Width="120" />
+                            <DataGridTextColumn Header="清晰度" Binding="{Binding Quality}" Width="90" />
+                            <DataGridTextColumn Header="大小" Binding="{Binding SizeLabel}" Width="100" />
+                            <DataGridTemplateColumn Header="操作" Width="230">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <Button Classes="icon-button"
+                                                    Theme="{DynamicResource BorderlessIconButton}" ToolTip.Tip="打开保存位置"
+                                                    Command="{Binding DataContext.OpenHistoryDirectoryCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                    CommandParameter="{Binding}">
+                                                <StackPanel Orientation="Horizontal" Spacing="5">
+                                                    <TextBlock Text="↗" /><TextBlock Text="打开位置" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Classes="icon-button"
+                                                    Theme="{DynamicResource BorderlessIconButton}" ToolTip.Tip="复制视频地址"
+                                                    Command="{Binding DataContext.CopyHistoryUrlCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                    CommandParameter="{Binding}">
+                                                <StackPanel Orientation="Horizontal" Spacing="5">
+                                                    <TextBlock Text="⧉" /><TextBlock Text="复制地址" />
+                                                </StackPanel>
+                                            </Button>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
             </Border>
-          </DataTemplate></DataGridTemplateColumn.CellTemplate>
-        </DataGridTemplateColumn>
-        <DataGridTemplateColumn Header="下载进度与实时速度" Width="2*">
-          <DataGridTemplateColumn.CellTemplate><DataTemplate>
-            <StackPanel Spacing="4">
-              <Grid ColumnDefinitions="Auto,*"><TextBlock Text="{Binding ProgressLabel}" Foreground="{DynamicResource SemiColorPrimary}" FontWeight="SemiBold" FontSize="11" /><TextBlock Grid.Column="1" Text="{Binding RemainingTime}" Foreground="{DynamicResource SemiColorText2}" HorizontalAlignment="Right" FontSize="11" /></Grid>
-              <ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}" />
-              <TextBlock Text="{Binding TransferLabel}" Foreground="{DynamicResource SemiColorText2}" FontSize="10" />
-            </StackPanel>
-          </DataTemplate></DataGridTemplateColumn.CellTemplate>
-        </DataGridTemplateColumn>
-        <DataGridTextColumn Header="大小" Binding="{Binding SizeLabel}" Width="95" />
-        <DataGridTemplateColumn Header="操作控制" Width="240">
-          <DataGridTemplateColumn.CellTemplate><DataTemplate>
-            <StackPanel Orientation="Horizontal" Spacing="6">
-              <Button Classes="Warning icon-button" Theme="{DynamicResource BorderlessIconButton}" ToolTip.Tip="暂停下载" Command="{Binding DataContext.PauseItemCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" IsVisible="{Binding CanPause}"><TextBlock Text="⏸" /></Button>
-              <Button Classes="Primary icon-button" Theme="{DynamicResource BorderlessIconButton}" ToolTip.Tip="继续下载" Command="{Binding DataContext.ResumeItemCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" IsVisible="{Binding CanResume}"><TextBlock Text="▶" /></Button>
-              <Button Classes="Warning icon-button" Theme="{DynamicResource BorderlessIconButton}" ToolTip.Tip="重试任务" Command="{Binding DataContext.RetryItemCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" IsVisible="{Binding CanRetry}"><TextBlock Text="↻" /></Button>
-              <Button Classes="Danger icon-button" Theme="{DynamicResource BorderlessIconButton}" ToolTip.Tip="取消任务" Command="{Binding DataContext.CancelItemCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" IsVisible="{Binding CanCancel}"><TextBlock Text="🗑" /></Button>
-              <Button Classes="Primary icon-button" Theme="{DynamicResource BorderlessIconButton}" ToolTip.Tip="播放视频" Command="{Binding DataContext.PlayItemCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" IsVisible="{Binding CanOpenFile}"><TextBlock Text="▶" /></Button>
-              <Button Classes="icon-button" Theme="{DynamicResource BorderlessIconButton}" ToolTip.Tip="打开保存目录" Command="{Binding DataContext.OpenItemDirectoryCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" IsVisible="{Binding CanOpenFile}"><TextBlock Text="▰" /></Button>
-            </StackPanel>
-          </DataTemplate></DataGridTemplateColumn.CellTemplate>
-        </DataGridTemplateColumn>
-      </DataGrid.Columns>
-    </DataGrid>
-    <Grid Grid.Row="2" Margin="16,11" ColumnDefinitions="*,Auto"><TextBlock Text="{Binding TaskSummary}" Foreground="{DynamicResource SemiColorText2}" /><TextBlock Grid.Column="1" Text="{Binding StatusMessage}" Foreground="{DynamicResource SemiColorText2}" TextTrimming="CharacterEllipsis" MaxWidth="480" /></Grid>
-  </Grid>
-</Border>
-    <Grid Grid.Row="2" ColumnDefinitions="*,*,*" ColumnSpacing="12"><Border Background="{DynamicResource SemiColorFill0}" BorderBrush="{DynamicResource SemiColorBorder}" BorderThickness="1" CornerRadius="8" Padding="12"><Grid ColumnDefinitions="40,*"><TextBlock Text="↯" Foreground="{DynamicResource SemiColorPrimary}" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" /><StackPanel Grid.Column="1" Spacing="3"><TextBlock Text="实时下载总速率" Foreground="{DynamicResource SemiColorText2}" FontSize="11" /><TextBlock Text="{Binding TotalSpeedLabel}" FontWeight="Bold" FontSize="15" /></StackPanel></Grid></Border><Border Grid.Column="1" Background="{DynamicResource SemiColorFill0}" BorderBrush="{DynamicResource SemiColorBorder}" BorderThickness="1" CornerRadius="8" Padding="12"><Grid ColumnDefinitions="40,*"><TextBlock Text="■" Foreground="{DynamicResource SemiColorSuccess}" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" /><StackPanel Grid.Column="1" Spacing="3"><TextBlock Text="可用磁盘空间" Foreground="{DynamicResource SemiColorText2}" FontSize="11" /><TextBlock Text="{Binding DiskFreeLabel}" FontWeight="Bold" FontSize="15" /></StackPanel></Grid></Border><Border Grid.Column="2" Background="{DynamicResource SemiColorFill0}" BorderBrush="{DynamicResource SemiColorBorder}" BorderThickness="1" CornerRadius="8" Padding="12"><Grid ColumnDefinitions="40,*"><TextBlock Text="≡" Foreground="{DynamicResource SemiColorTertiary}" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" /><StackPanel Grid.Column="1" Spacing="3"><TextBlock Text="工作线程池" Foreground="{DynamicResource SemiColorText2}" FontSize="11" /><TextBlock Text="{Binding WorkerPoolLabel}" FontWeight="Bold" FontSize="15" /></StackPanel></Grid></Border></Grid>
-      </Grid>
-      <Border Margin="20" Classes="panel" Padding="24" IsVisible="{Binding IsHistoryPage}">
-        <Grid RowDefinitions="Auto,*" RowSpacing="18">
-          <StackPanel><TextBlock Text="历史记录" FontSize="18" FontWeight="SemiBold" /><TextBlock Text="已完成的下载会保存在这里" Foreground="{DynamicResource SemiColorText2}" /></StackPanel>
-          <DataGrid Grid.Row="1" ItemsSource="{Binding HistoryItems}" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" Focusable="False" CanUserResizeColumns="False" CanUserSortColumns="False" CanUserReorderColumns="False" BeginningEdit="OnTaskGridBeginningEdit" Classes="history-grid">
-            <DataGrid.Columns>
-              <DataGridTextColumn Header="完成时间" Binding="{Binding CompletedAtLabel}" Width="150" />
-              <DataGridTextColumn Header="标题" Binding="{Binding Title}" Width="2*" />
-              <DataGridTextColumn Header="VID" Binding="{Binding Vid}" Width="120" />
-              <DataGridTextColumn Header="清晰度" Binding="{Binding Quality}" Width="90" />
-              <DataGridTextColumn Header="大小" Binding="{Binding SizeLabel}" Width="100" />
-              <DataGridTemplateColumn Header="操作" Width="230">
-                <DataGridTemplateColumn.CellTemplate><DataTemplate><StackPanel Orientation="Horizontal" Spacing="6">
-                  <Button Classes="icon-button" Theme="{DynamicResource BorderlessIconButton}" ToolTip.Tip="打开保存位置" Command="{Binding DataContext.OpenHistoryDirectoryCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}"><StackPanel Orientation="Horizontal" Spacing="5"><TextBlock Text="↗" /><TextBlock Text="打开位置" /></StackPanel></Button>
-                  <Button Classes="icon-button" Theme="{DynamicResource BorderlessIconButton}" ToolTip.Tip="复制视频地址" Command="{Binding DataContext.CopyHistoryUrlCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}"><StackPanel Orientation="Horizontal" Spacing="5"><TextBlock Text="⧉" /><TextBlock Text="复制地址" /></StackPanel></Button>
-                </StackPanel></DataTemplate></DataGridTemplateColumn.CellTemplate>
-              </DataGridTemplateColumn>
-            </DataGrid.Columns>
-          </DataGrid>
         </Grid>
-      </Border>
+        <Border Grid.Row="2" Background="{DynamicResource SemiColorFill0}"
+                BorderBrush="{DynamicResource SemiColorBorder}" BorderThickness="0,1,0,0" Padding="14,7">
+            <StackPanel Orientation="Horizontal" Spacing="14">
+                <TextBlock Text="● 就绪" Foreground="{DynamicResource SemiColorSuccess}" />
+                <TextBlock Text="{Binding AppVersion}" Foreground="{DynamicResource SemiColorText2}" />
+            </StackPanel>
+        </Border>
+        <Border Grid.RowSpan="3" IsVisible="{Binding IsToastVisible}"
+                IsHitTestVisible="False" HorizontalAlignment="Right" VerticalAlignment="Top"
+                Margin="0,64,20,0" MaxWidth="420" Padding="12,9" CornerRadius="6"
+                Background="{DynamicResource SemiColorFill0}"
+                BorderBrush="{DynamicResource SemiColorPrimary}" BorderThickness="1">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock Text="●" Foreground="{DynamicResource SemiColorPrimary}"
+                           VerticalAlignment="Center" />
+                <TextBlock Text="{Binding ToastMessage}" TextWrapping="Wrap"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+        </Border>
     </Grid>
-    <Border Grid.Row="2" Background="{DynamicResource SemiColorFill0}" BorderBrush="{DynamicResource SemiColorBorder}" BorderThickness="0,1,0,0" Padding="14,7"><StackPanel Orientation="Horizontal" Spacing="14"><TextBlock Text="● 就绪" Foreground="{DynamicResource SemiColorSuccess}" /><TextBlock Text="{Binding AppVersion}" Foreground="{DynamicResource SemiColorText2}" /></StackPanel></Border>
-  </Grid>
 </ursa:UrsaWindow>

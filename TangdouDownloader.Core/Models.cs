@@ -24,4 +24,4 @@ public sealed record DownloadProgress(long BytesReceived, long TotalBytes)
     public int Percentage => TotalBytes > 0 ? (int)Math.Clamp(BytesReceived * 100L / TotalBytes, 0, 100) : 0;
 }
 
-public sealed record DownloadResult(string FilePath, long BytesReceived);
+public sealed record DownloadResult(string FilePath, long BytesReceived, bool UsedSingleThreadFallback = false);

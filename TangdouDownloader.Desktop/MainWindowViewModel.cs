@@ -32,6 +32,7 @@ public sealed class DownloadItem : ReactiveObject
     public required string Vid { get; init; }
     public required string Title { get => _title; set => SetField(ref _title, value); }
     public required string Url { get => _url; set => SetField(ref _url, value); }
+    public string OriginalUrl { get; init; } = string.Empty;
     public required string Quality { get; init; }
     public bool IsSelected { get => _isSelected; set => SetField(ref _isSelected, value); }
     public int Progress { get => _progress; set { if (SetField(ref _progress, value)) OnPropertyChanged(nameof(ProgressLabel)); } }
@@ -136,11 +137,15 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
     private string _inputText = string.Empty;
     private string _selectedQuality = "1080P";
     private int _selectedConcurrency = 4;
+    private int _selectedDownloadThreads = 2;
     private string _downloadDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "Tangdou Downloads");
     private string _page = DownloadsPage;
     private string _searchText = string.Empty;
     private string _filter = "全部";
     private string _statusMessage = "等待添加糖豆视频链接";
+    private string _toastMessage = string.Empty;
+    private bool _isToastVisible;
+    private int _toastGeneration;
     private bool _isDarkTheme = true;
 
     public MainWindowViewModel(
@@ -218,6 +223,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
     public ObservableCollection<HistoryItem> HistoryItems { get; } = [];
     public IReadOnlyList<string> Qualities { get; } = ["1080P", "720P", "540P", "360P"];
     public IReadOnlyList<int> ConcurrencyOptions { get; } = [1, 2, 3, 4, 6, 8];
+    public IReadOnlyList<int> DownloadThreadOptions { get; } = [1, 2, 4, 8, 16];
     public string InputText { get => _inputText; set { if (SetField(ref _inputText, value)) OnPropertyChanged(nameof(RecognizedCount)); } }
     public int RecognizedCount => DownloaderUtils.ExtractVids(InputText).Count;
     public string SelectedQuality
@@ -225,10 +231,33 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         get => _selectedQuality;
         set
         {
-            if (SetField(ref _selectedQuality, value)) SaveSettings();
+            if (!SetField(ref _selectedQuality, value)) return;
+            SaveSettings();
+            ShowToast($"清晰度已设为 {value}");
         }
     }
-    public int SelectedConcurrency { get => _selectedConcurrency; set { if (SetField(ref _selectedConcurrency, Math.Clamp(value, 1, 8))) { OnPropertyChanged(nameof(WorkerPoolLabel)); SaveSettings(); } } }
+    public int SelectedConcurrency
+    {
+        get => _selectedConcurrency;
+        set
+        {
+            if (!SetField(ref _selectedConcurrency, Math.Clamp(value, 1, 8))) return;
+            OnPropertyChanged(nameof(WorkerPoolLabel));
+            SaveSettings();
+            ShowToast($"同时下载数已设为 {_selectedConcurrency}");
+        }
+    }
+    public int SelectedDownloadThreads
+    {
+        get => _selectedDownloadThreads;
+        set
+        {
+            var threads = DownloadThreadOptions.Contains(value) ? value : 2;
+            if (!SetField(ref _selectedDownloadThreads, threads)) return;
+            SaveSettings();
+            ShowToast($"下载线程已设为 {threads}");
+        }
+    }
     public string DownloadDirectory
     {
         get => _downloadDirectory;
@@ -241,6 +270,8 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
     }
     public string SearchText { get => _searchText; set { if (SetField(ref _searchText, value)) Refresh(); } }
     public string StatusMessage { get => _statusMessage; private set => SetField(ref _statusMessage, value); }
+    public string ToastMessage { get => _toastMessage; private set => SetField(ref _toastMessage, value); }
+    public bool IsToastVisible { get => _isToastVisible; private set => SetField(ref _isToastVisible, value); }
     public bool IsDownloadPage => Page == DownloadsPage;
     public bool IsHistoryPage => Page == HistoryPage;
     public bool IsDownloadsSelected => IsDownloadPage;
@@ -272,7 +303,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
     }
     public string TotalSpeedLabel => DownloadItem.FormatBytes((long)Items.Sum(item => item.SpeedBytesPerSecond)) + "/s";
     public string DiskFreeLabel => GetFreeSpaceLabel();
-    public string WorkerPoolLabel { get { lock (_activeLock) return $"活动 {_activeDownloads.Count} / 并发 {SelectedConcurrency}"; } }
+    public string WorkerPoolLabel { get { lock (_activeLock) return $"活动 {_activeDownloads.Count} / 同时 {SelectedConcurrency}"; } }
 
     public ReactiveCommand<RxVoid, RxVoid> ShowDownloadsCommand { get; }
     public ReactiveCommand<RxVoid, RxVoid> ShowHistoryCommand { get; }
@@ -331,18 +362,23 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         {
             if (string.IsNullOrWhiteSpace(text))
             {
-                StatusMessage = "剪贴板中没有可识别的视频链接";
+                ShowToast("剪贴板中没有可识别的视频链接");
                 return;
             }
             InputText = string.IsNullOrWhiteSpace(InputText) ? text : $"{InputText.TrimEnd()}\n{text}";
-            StatusMessage = $"已从剪贴板读取 {DownloaderUtils.ExtractVids(text).Count} 个 VID";
+            ShowToast($"已从剪贴板读取 {DownloaderUtils.ExtractVids(text).Count} 个 VID");
         });
     }
 
     private async Task BrowseDirectoryAsync()
     {
         var selected = await _platform.PickDownloadDirectoryAsync();
-        if (!string.IsNullOrWhiteSpace(selected)) await OnUiAsync(() => DownloadDirectory = selected);
+        if (!string.IsNullOrWhiteSpace(selected))
+            await OnUiAsync(() =>
+            {
+                DownloadDirectory = selected;
+                ShowToast("保存目录已更新");
+            });
     }
 
     private async Task ResolveAndQueueAsync()
@@ -350,9 +386,10 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         try
         {
             var vids = DownloaderUtils.ExtractVids(InputText);
+            var originalUrls = BuildOriginalUrls(InputText);
             if (vids.Count == 0)
             {
-                await OnUiAsync(() => StatusMessage = "请输入糖豆链接或 VID");
+                await OnUiAsync(() => ShowToast("请输入糖豆链接或 VID"));
                 return;
             }
 
@@ -365,7 +402,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
                 duplicateCount = vids.Count - pending.Count;
                 if (pending.Count == 0)
                 {
-                    StatusMessage = $"未加入新任务，{duplicateCount} 项已在列表中";
+                    ShowToast($"未加入新任务，{duplicateCount} 项已在列表中");
                     return;
                 }
 
@@ -375,13 +412,14 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
                     Vid = vid,
                     Title = $"糖豆视频 {vid}",
                     Url = string.Empty,
+                    OriginalUrl = originalUrls.TryGetValue(vid, out var originalUrl) ? originalUrl : vid,
                     Quality = SelectedQuality,
                     Status = "解析中"
                 }).ToList();
 
                 // A row is visible before any network operation finishes.
                 foreach (var item in workItems) Items.Add(item);
-                StatusMessage = $"正在解析 {workItems.Count} 个视频...";
+                ShowToast($"正在解析 {workItems.Count} 个视频...");
             });
 
             if (workItems.Count == 0) return;
@@ -393,17 +431,17 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
             await OnUiAsync(() =>
             {
                 InputText = string.Empty;
-                StatusMessage = $"已加入 {workItems.Count - failures} 项，失败 {failures} 项，重复跳过 {duplicateCount} 项";
+                ShowToast($"已加入 {workItems.Count - failures} 项，失败 {failures} 项，重复跳过 {duplicateCount} 项");
                 Refresh();
             });
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
         {
-            await OnUiAsync(() => StatusMessage = "解析已取消");
+            await OnUiAsync(() => ShowToast("解析已取消"));
         }
         catch (Exception exception)
         {
-            await OnUiAsync(() => StatusMessage = $"解析任务失败: {DescribeFailure(exception)}");
+            await OnUiAsync(() => ShowToast($"解析任务失败: {DescribeFailure(exception)}"));
         }
     }
 
@@ -461,20 +499,27 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         var queue = Items.Where(item => item.Status is "排队中" or "已暂停").ToList();
         var directory = DownloadDirectory;
         var concurrency = SelectedConcurrency;
-        _ = Task.Run(() => StartAllAsync(queue, directory, concurrency));
+        var downloadThreads = SelectedDownloadThreads;
+        if (queue.Count == 0)
+        {
+            ShowToast("没有可开始的任务");
+            return;
+        }
+        ShowToast($"开始下载 {queue.Count} 项任务，每项 {downloadThreads} 线程");
+        _ = Task.Run(() => StartAllAsync(queue, directory, concurrency, downloadThreads));
     }
 
-    private async Task StartAllAsync(IReadOnlyList<DownloadItem> queue, string directory, int concurrency)
+    private async Task StartAllAsync(IReadOnlyList<DownloadItem> queue, string directory, int concurrency, int downloadThreads)
     {
         try
         {
-            if (queue.Count == 0) { await OnUiAsync(() => StatusMessage = "没有可开始的任务"); return; }
+            if (queue.Count == 0) return;
             Directory.CreateDirectory(directory);
             using var gate = new SemaphoreSlim(concurrency);
             await Task.WhenAll(queue.Select(async item =>
             {
                 await gate.WaitAsync(_lifetime.Token);
-                try { await DownloadItemAsync(item, directory); }
+                try { await DownloadItemAsync(item, directory, downloadThreads); }
                 finally { gate.Release(); }
             }));
             await OnUiAsync(() =>
@@ -487,40 +532,42 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            await OnUiAsync(() => StatusMessage = $"启动下载失败: {DescribeFailure(ex)}");
+            await OnUiAsync(() => ShowToast($"启动下载失败: {DescribeFailure(ex)}"));
         }
     }
 
     private async Task ResumeItemAsync(DownloadItem? item)
     {
         if (item is null || !item.CanResume) return;
+        var downloadThreads = SelectedDownloadThreads;
         await WaitUntilInactiveAsync(item);
-        await DownloadItemAsync(item, DownloadDirectory);
+        await OnUiAsync(() => ShowToast($"继续下载: {item.Title}"));
+        await DownloadItemAsync(item, DownloadDirectory, downloadThreads);
     }
 
     private async Task RetryItemAsync(DownloadItem? item)
     {
         if (item is null || !item.CanRetry) return;
 
+        await OnUiAsync(() =>
+        {
+            item.ErrorMessage = null;
+            item.RemainingTime = "正在重新解析";
+            item.Status = "解析中";
+            ShowToast($"正在重新解析: {item.Title}");
+        });
+
+        using var gate = new SemaphoreSlim(1, 1);
+        await ResolveItemAsync(item, gate);
         if (item.Status == "解析失败")
         {
-            await OnUiAsync(() =>
-            {
-                item.ErrorMessage = null;
-                item.RemainingTime = "正在重新解析";
-                item.Status = "解析中";
-            });
-
-            using var gate = new SemaphoreSlim(1, 1);
-            await ResolveItemAsync(item, gate);
-            await OnUiAsync(() =>
-                StatusMessage = item.Status == "解析失败"
-                    ? $"重试解析失败: {item.Title}"
-                    : $"已重新解析: {item.Title}");
+            await OnUiAsync(() => ShowToast($"重试解析失败: {item.Title}"));
             return;
         }
 
-        await DownloadItemAsync(item, DownloadDirectory);
+        if (item.Status != "排队中" || string.IsNullOrWhiteSpace(item.Url)) return;
+        await OnUiAsync(() => ShowToast($"已重新解析，开始下载: {item.Title}"));
+        await DownloadItemAsync(item, DownloadDirectory, SelectedDownloadThreads);
     }
 
     private async Task WaitUntilInactiveAsync(DownloadItem item)
@@ -535,7 +582,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         }
     }
 
-    private async Task DownloadItemAsync(DownloadItem item, string directory)
+    private async Task DownloadItemAsync(DownloadItem item, string directory, int downloadThreads)
     {
         lock (_activeLock)
         {
@@ -570,7 +617,15 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
                     Dispatcher.UIThread.Post(() => ApplyProgress(item, value));
                 }
             });
-            var result = await _downloader.DownloadAsync(item.Url, item.Title, directory, progress, cancellation.Token);
+            var result = await _downloader.DownloadAsync(
+                item.Url,
+                item.Title,
+                directory,
+                progress,
+                cancellation.Token,
+                downloadThreads,
+                () => Dispatcher.UIThread.Post(() =>
+                    ShowToast($"服务器不支持多线程，{item.Title} 将改用单线程下载")));
             await OnUiAsync(() =>
             {
                 item.FilePath = result.FilePath;
@@ -581,7 +636,9 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
                 item.RemainingTime = "已完成";
                 item.Status = "已完成";
                 AddHistory(item);
-                StatusMessage = $"已完成: {item.Title}";
+                ShowToast(result.UsedSingleThreadFallback
+                    ? $"已完成: {item.Title}（服务器不支持多线程，已改用单线程）"
+                    : $"已完成: {item.Title}");
             });
         }
         catch (OperationCanceledException)
@@ -599,7 +656,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
                 item.Status = "下载失败";
                 item.ErrorMessage = ex.Message;
                 item.RemainingTime = DescribeFailure(ex);
-                StatusMessage = $"下载失败: {item.Title} - {item.RemainingTime}";
+                ShowToast($"下载失败: {item.Title} - {item.RemainingTime}");
             });
         }
         finally
@@ -701,7 +758,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         await Task.WhenAll(active.Select(pair => WaitUntilInactiveAsync(pair.Key)));
         await OnUiAsync(() =>
         {
-            StatusMessage = active.Count == 0 ? "没有正在下载的任务" : $"已暂停 {active.Count} 项任务";
+            ShowToast(active.Count == 0 ? "没有正在下载的任务" : $"已暂停 {active.Count} 项任务");
             OnPropertyChanged(nameof(TaskSummary));
             OnPropertyChanged(nameof(TotalSpeedLabel));
             OnPropertyChanged(nameof(WorkerPoolLabel));
@@ -721,6 +778,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         if (token is not null) await WaitUntilInactiveAsync(item);
         await OnUiAsync(() =>
         {
+            ShowToast($"已暂停: {item.Title}");
             OnPropertyChanged(nameof(TaskSummary));
             OnPropertyChanged(nameof(TotalSpeedLabel));
             OnPropertyChanged(nameof(WorkerPoolLabel));
@@ -741,7 +799,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         await OnUiAsync(() =>
         {
             Items.Remove(item);
-            StatusMessage = "任务已取消并从列表移除";
+            ShowToast("任务已取消并从列表移除");
         });
     }
 
@@ -749,7 +807,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
     {
         var selected = Items.Where(item => item.IsSelected).ToList();
         foreach (var item in selected) await CancelItemAsync(item);
-        await OnUiAsync(() => StatusMessage = selected.Count == 0 ? "没有选中的任务" : $"已从任务列表删除 {selected.Count} 项");
+        await OnUiAsync(() => ShowToast(selected.Count == 0 ? "没有选中的任务" : $"已从任务列表删除 {selected.Count} 项"));
     }
 
     private void SetFilter(string filter)
@@ -769,12 +827,12 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
     {
         if (item is null || string.IsNullOrWhiteSpace(item.Url))
         {
-            StatusMessage = "该历史记录没有可复制的视频地址";
+            await OnUiAsync(() => ShowToast("该历史记录没有可复制的视频地址"));
             return;
         }
 
         await _platform.SetClipboardTextAsync(item.Url);
-        StatusMessage = "视频地址已复制到剪贴板";
+        await OnUiAsync(() => ShowToast("视频地址已复制到剪贴板"));
     }
     private void Refresh()
     {
@@ -799,8 +857,22 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
     private void AddHistory(DownloadItem item)
     {
         if (item.FilePath is null) return;
-        HistoryItems.Insert(0, new HistoryItem(item.Title, item.Vid, item.Quality, item.FilePath, item.BytesReceived, DateTimeOffset.Now, item.Url));
+        var originalUrl = string.IsNullOrWhiteSpace(item.OriginalUrl) ? item.Vid : item.OriginalUrl;
+        HistoryItems.Insert(0, new HistoryItem(item.Title, item.Vid, item.Quality, item.FilePath, item.BytesReceived, DateTimeOffset.Now, originalUrl));
         PersistHistory();
+    }
+
+    private static Dictionary<string, string> BuildOriginalUrls(string input)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var line in input.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            foreach (var vid in DownloaderUtils.ExtractVids(line)) result.TryAdd(vid, line);
+        }
+
+        var fallback = input.Trim();
+        foreach (var vid in DownloaderUtils.ExtractVids(input)) result.TryAdd(vid, fallback);
+        return result;
     }
 
     private static string DescribeFailure(Exception exception)
@@ -820,11 +892,35 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         await Dispatcher.UIThread.InvokeAsync(action);
     }
 
+    private void ShowToast(string message)
+    {
+        StatusMessage = message;
+        ToastMessage = message;
+        IsToastVisible = true;
+        var generation = ++_toastGeneration;
+        _ = HideToastAfterDelayAsync(generation);
+    }
+
+    private async Task HideToastAfterDelayAsync(int generation)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(3), _lifetime.Token);
+            await OnUiAsync(() =>
+            {
+                if (generation == _toastGeneration) IsToastVisible = false;
+            });
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+        }
+    }
+
     private void ObserveCommandErrors(IHandleObservableErrors command, string operation)
     {
         command.ThrownExceptions.Subscribe(new CommandErrorObserver(exception =>
             Dispatcher.UIThread.Post(() =>
-                StatusMessage = $"{operation}: {DescribeFailure(exception)}")));
+                ShowToast($"{operation}: {DescribeFailure(exception)}"))));
     }
 
     private sealed class CommandErrorObserver(Action<Exception> onNext) : IObserver<Exception>
@@ -841,6 +937,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         {
             _selectedQuality = Qualities.Contains(settings.Quality) ? settings.Quality : _selectedQuality;
             _selectedConcurrency = ConcurrencyOptions.Contains(settings.Concurrency) ? settings.Concurrency : _selectedConcurrency;
+            _selectedDownloadThreads = DownloadThreadOptions.Contains(settings.DownloadThreads) ? settings.DownloadThreads : _selectedDownloadThreads;
             _downloadDirectory = string.IsNullOrWhiteSpace(settings.DownloadDirectory) ? _downloadDirectory : settings.DownloadDirectory;
             _isDarkTheme = settings.IsDarkTheme;
         }
@@ -849,14 +946,14 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
 
     private void SaveSettings()
     {
-        try { _stateStore.SaveSettings(new WorkspaceSettings(SelectedQuality, SelectedConcurrency, DownloadDirectory, _isDarkTheme)); }
-        catch (Exception) { StatusMessage = "设置保存失败"; }
+        try { _stateStore.SaveSettings(new WorkspaceSettings(SelectedQuality, SelectedConcurrency, DownloadDirectory, _isDarkTheme, SelectedDownloadThreads)); }
+        catch (Exception) { ShowToast("设置保存失败"); }
     }
 
     private void PersistHistory()
     {
         try { _stateStore.SaveHistory(HistoryItems); }
-        catch (Exception) { StatusMessage = "历史记录保存失败"; }
+        catch (Exception) { ShowToast("历史记录保存失败"); }
     }
 
     private string GetFreeSpaceLabel()

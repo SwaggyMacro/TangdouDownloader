@@ -62,7 +62,7 @@ jobs:
             os: macos-13
             rid: osx-x64
             executable: TangdouDownloader.Desktop
-            asset_name: TangdouDownloader-osx-x64
+            asset_name: TangdouDownloader-macos-x64
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
@@ -84,17 +84,21 @@ jobs:
           --self-contained true
           --output publish/${{ matrix.rid }}
           -p:PublishSingleFile=true
+          -p:PublishAot=false
           -p:IncludeNativeLibrariesForSelfExtract=true
           -p:EnableCompressionInSingleFile=true
           -p:PublishTrimmed=true
           -p:TrimMode=partial
-          -p:PublishReadyToRun=true
+          -p:PublishReadyToRun=false
+          -p:DebuggerSupport=false
+          -p:StackTraceSupport=false
           -p:DebugType=None
           -p:DebugSymbols=false
+          -p:StripSymbols=true
 
-      - name: Prepare executable asset
+      - name: Name single-file application
         shell: pwsh
-        run: Copy-Item "publish/${{ matrix.rid }}/${{ matrix.executable }}" "${{ matrix.asset_name }}"
+        run: Move-Item -LiteralPath "publish/${{ matrix.rid }}/${{ matrix.executable }}" -Destination "${{ matrix.asset_name }}"
 
       - name: Upload executable to release
         uses: softprops/action-gh-release@v2

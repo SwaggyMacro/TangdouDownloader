@@ -46,7 +46,22 @@ public interface IVideoResolver
 
 public interface IVideoDownloader
 {
-    Task<DownloadResult> DownloadAsync(string url, string title, string directory, IProgress<DownloadProgress>? progress = null, CancellationToken cancellationToken = default);
+    Task<DownloadResult> DownloadAsync(
+        string url,
+        string title,
+        string directory,
+        IProgress<DownloadProgress>? progress = null,
+        CancellationToken cancellationToken = default);
+
+    Task<DownloadResult> DownloadAsync(
+        string url,
+        string title,
+        string directory,
+        IProgress<DownloadProgress>? progress,
+        CancellationToken cancellationToken,
+        int downloadThreads,
+        Action? onSingleThreadFallback = null)
+        => DownloadAsync(url, title, directory, progress, cancellationToken);
 }
 
 public sealed class TangdouVideoService : IVideoResolver, IDisposable
@@ -198,11 +213,152 @@ public sealed class VideoDownloadService : IVideoDownloader
 {
     private readonly HttpClient _client = new(new HttpClientHandler { AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate });
 
-    public async Task<DownloadResult> DownloadAsync(string url, string title, string directory, IProgress<DownloadProgress>? progress = null, CancellationToken cancellationToken = default)
+    public Task<DownloadResult> DownloadAsync(
+        string url,
+        string title,
+        string directory,
+        IProgress<DownloadProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+        => DownloadAsync(url, title, directory, progress, cancellationToken, 2);
+
+    public async Task<DownloadResult> DownloadAsync(
+        string url,
+        string title,
+        string directory,
+        IProgress<DownloadProgress>? progress = null,
+        CancellationToken cancellationToken = default,
+        int downloadThreads = 2,
+        Action? onSingleThreadFallback = null)
     {
         Directory.CreateDirectory(directory);
         var filePath = Path.Combine(directory, DownloaderUtils.SanitizeFileName(title) + ".mp4");
         var partialPath = filePath + ".part";
+
+        // Preserve existing resumable downloads. Segment files are intentionally
+        // removed on interruption, while the established .part format can resume.
+        if (downloadThreads <= 1 || File.Exists(partialPath))
+            return await DownloadSequentiallyAsync(url, filePath, partialPath, progress, cancellationToken);
+
+        var total = await GetRangeLengthAsync(url, cancellationToken);
+        if (total is null)
+        {
+            onSingleThreadFallback?.Invoke();
+            return await DownloadSequentiallyAsync(url, filePath, partialPath, progress, cancellationToken, usedSingleThreadFallback: true);
+        }
+
+        var segmentCount = (int)Math.Min(Math.Max(1, downloadThreads), total.Value);
+        if (segmentCount <= 1)
+            return await DownloadSequentiallyAsync(url, filePath, partialPath, progress, cancellationToken);
+
+        var segmentPaths = Enumerable.Range(0, segmentCount)
+            .Select(index => partialPath + $".segment-{index:D2}")
+            .ToArray();
+        var ranges = Enumerable.Range(0, segmentCount)
+            .Select(index => new ByteRange(
+                total.Value * index / segmentCount,
+                total.Value * (index + 1) / segmentCount - 1))
+            .ToArray();
+        long received = 0;
+        progress?.Report(new DownloadProgress(received, total.Value));
+
+        try
+        {
+            await Task.WhenAll(Enumerable.Range(0, segmentCount).Select(index =>
+                DownloadSegmentAsync(
+                    url,
+                    segmentPaths[index],
+                    ranges[index],
+                    bytes =>
+                    {
+                        var current = Interlocked.Add(ref received, bytes);
+                        progress?.Report(new DownloadProgress(current, total.Value));
+                    },
+                    cancellationToken)));
+
+            await MergeSegmentsAsync(segmentPaths, partialPath, cancellationToken);
+            File.Move(partialPath, filePath, overwrite: true);
+            return new DownloadResult(filePath, received);
+        }
+        catch (RangeNotSupportedException)
+        {
+            DeleteFiles(segmentPaths);
+            onSingleThreadFallback?.Invoke();
+            return await DownloadSequentiallyAsync(url, filePath, partialPath, progress, cancellationToken, usedSingleThreadFallback: true);
+        }
+        catch
+        {
+            DeleteFiles(segmentPaths);
+            throw;
+        }
+    }
+
+    private async Task<long?> GetRangeLengthAsync(string url, CancellationToken cancellationToken)
+    {
+        using var request = TangdouVideoService.CreateRequest(HttpMethod.Get, url);
+        request.Headers.Range = new RangeHeaderValue(0, 0);
+        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        if (!response.IsSuccessStatusCode) response.EnsureSuccessStatusCode();
+        var contentRange = response.Content.Headers.ContentRange;
+        return response.StatusCode == HttpStatusCode.PartialContent
+            && contentRange?.From == 0
+            && contentRange?.To == 0
+            && contentRange.Length is > 0
+            ? contentRange.Length
+            : null;
+    }
+
+    private async Task DownloadSegmentAsync(
+        string url,
+        string segmentPath,
+        ByteRange range,
+        Action<int> reportBytes,
+        CancellationToken cancellationToken)
+    {
+        using var request = TangdouVideoService.CreateRequest(HttpMethod.Get, url);
+        request.Headers.Range = new RangeHeaderValue(range.Start, range.End);
+        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        if (!response.IsSuccessStatusCode) response.EnsureSuccessStatusCode();
+        var contentRange = response.Content.Headers.ContentRange;
+        if (response.StatusCode != HttpStatusCode.PartialContent
+            || contentRange?.From != range.Start
+            || contentRange.To != range.End)
+            throw new RangeNotSupportedException();
+        response.EnsureSuccessStatusCode();
+
+        await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var target = new FileStream(segmentPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true);
+        var buffer = new byte[81920];
+        long received = 0;
+        int count;
+        while ((count = await source.ReadAsync(buffer, cancellationToken)) > 0)
+        {
+            await target.WriteAsync(buffer.AsMemory(0, count), cancellationToken);
+            reportBytes(count);
+            received += count;
+        }
+        if (received != range.End - range.Start + 1)
+            throw new RangeNotSupportedException();
+    }
+
+    private static async Task MergeSegmentsAsync(IReadOnlyList<string> segmentPaths, string partialPath, CancellationToken cancellationToken)
+    {
+        await using var target = new FileStream(partialPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true);
+        foreach (var segmentPath in segmentPaths)
+        {
+            await using var source = new FileStream(segmentPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
+            await source.CopyToAsync(target, cancellationToken);
+        }
+        DeleteFiles(segmentPaths);
+    }
+
+    private async Task<DownloadResult> DownloadSequentiallyAsync(
+        string url,
+        string filePath,
+        string partialPath,
+        IProgress<DownloadProgress>? progress,
+        CancellationToken cancellationToken,
+        bool usedSingleThreadFallback = false)
+    {
         var existing = File.Exists(partialPath) ? new FileInfo(partialPath).Length : 0L;
 
         using var request = TangdouVideoService.CreateRequest(HttpMethod.Get, url);
@@ -236,6 +392,20 @@ public sealed class VideoDownloadService : IVideoDownloader
 
         target.Close();
         File.Move(partialPath, filePath, overwrite: true);
-        return new DownloadResult(filePath, received);
+        return new DownloadResult(filePath, received, usedSingleThreadFallback);
     }
+
+    private static void DeleteFiles(IEnumerable<string> paths)
+    {
+        foreach (var path in paths)
+        {
+            try { File.Delete(path); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private readonly record struct ByteRange(long Start, long End);
+
+    private sealed class RangeNotSupportedException : Exception;
 }
