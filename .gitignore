@@ -366,3 +366,6 @@ FodyWeavers.xsd
 # others
 *plan*.md
 *walkthrough*.md
+
+.idea/
+nuget.exe
