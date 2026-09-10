@@ -51,18 +51,31 @@ jobs:
           - name: Windows x64
             os: windows-latest
             rid: win-x64
+            runtime: win-x64
             executable: TangdouDownloader.Desktop.exe
             asset_name: TangdouDownloader-win-x64.exe
           - name: Linux x64
             os: ubuntu-latest
             rid: linux-x64
+            runtime: linux-x64
             executable: TangdouDownloader.Desktop
             asset_name: TangdouDownloader-linux-x64
+          - name: Linux arm64
+            os: ubuntu-latest
+            rid: linux-arm64
+            runtime: linux-arm64
+            executable: TangdouDownloader.Desktop
+            asset_name: TangdouDownloader-linux-arm64
           - name: macOS x64
             os: macos-latest
             rid: osx-x64
             executable: TangdouDownloader.Desktop
             asset_name: TangdouDownloader-macos-x64
+          - name: macOS arm64
+            os: macos-latest
+            rid: osx-arm64
+            executable: TangdouDownloader.Desktop
+            asset_name: TangdouDownloader-macos-arm64
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
