@@ -59,7 +59,7 @@ jobs:
             executable: TangdouDownloader.Desktop
             asset_name: TangdouDownloader-linux-x64
           - name: macOS x64
-            os: macos-13
+            os: macos-latest
             rid: osx-x64
             executable: TangdouDownloader.Desktop
             asset_name: TangdouDownloader-macos-x64
