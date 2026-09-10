@@ -113,7 +113,7 @@
                                 <StackPanel Orientation="Horizontal" Spacing="7">
                                     <TextBlock Text="保存目录" Foreground="{DynamicResource SemiColorText2}"
                                                VerticalAlignment="Center" />
-                                    <TextBox Text="{Binding DownloadDirectory}" Width="188" />
+                                    <TextBox Text="{Binding DownloadDirectory}" Width="308" />
                                     <Button Classes="icon-button" Theme="{DynamicResource BorderlessIconButton}"
                                             Command="{Binding BrowseDirectoryCommand}">
                                         <StackPanel Orientation="Horizontal" Spacing="5">
@@ -127,7 +127,7 @@
                                 <Button Classes="Primary icon-button" Theme="{DynamicResource SolidButton}"
                                         Command="{Binding ResolveCommand}">
                                     <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <TextBlock Text="＋" FontSize="15" /><TextBlock Text="解析并加入队列" />
+                                        <TextBlock Text="＋" FontSize="15" /><TextBlock Text="加入队列" />
                                     </StackPanel>
                                 </Button>
                                 <Button Classes="Danger icon-button" Theme="{DynamicResource SolidButton}"
@@ -240,7 +240,14 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTemplateColumn Header="清晰度 / 格式" Width="130">
+                                <DataGridTemplateColumn Width="130">
+                                    <DataGridTemplateColumn.HeaderTemplate>
+                                        <DataTemplate>
+                                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                <TextBlock Text="晰度 / 格式"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.HeaderTemplate>
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <Border Classes="quality-tag" CornerRadius="4" Padding="7,2" Height="24"
@@ -253,7 +260,14 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTemplateColumn Header="当前状态" Width="110">
+                                <DataGridTemplateColumn Width="110">
+                                    <DataGridTemplateColumn.HeaderTemplate>
+                                        <DataTemplate>
+                                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                <TextBlock Text="当前状态"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.HeaderTemplate>
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <Border Classes="status-tag" Classes.downloading="{Binding IsDownloading}"
@@ -281,10 +295,17 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTemplateColumn Header="下载进度与实时速度" Width="2*">
+                                <DataGridTemplateColumn Width="2*">
+                                    <DataGridTemplateColumn.HeaderTemplate>
+                                        <DataTemplate>
+                                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                <TextBlock Text="下载进度与实时速度"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.HeaderTemplate>
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
-                                            <StackPanel Spacing="4">
+                                            <StackPanel Spacing="4" VerticalAlignment="Center">
                                                 <Grid ColumnDefinitions="Auto,*">
                                                     <TextBlock Text="{Binding ProgressLabel}"
                                                                Foreground="{DynamicResource SemiColorPrimary}"
