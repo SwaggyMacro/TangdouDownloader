@@ -1,0 +1,688 @@
+namespace Aprillz.MewUI.Controls;
+
+using Aprillz.MewUI.Rendering;
+
+/// <summary>
+/// Base class for elements with size, margin, alignment, and data binding support.
+/// </summary>
+public abstract class FrameworkElement : UIElement, IDisposable
+{
+    private List<Action<Theme, FrameworkElement>>? _themeCallbacks;
+    private Size _lastArrangedSize;
+    private bool _hasArrangedSize;
+    private StyleSheet? _styleSheet;
+
+    protected static readonly MewProperty<Theme> ThemeProperty = MewProperty<Theme>.Register<FrameworkElement>(nameof(Theme), null!, MewPropertyOptions.AffectsRender);
+
+    /// <summary>
+    /// Gets or sets a <see cref="StyleSheet"/> that provides named styles
+    /// and type-based style rules for descendant controls.
+    /// </summary>
+    public StyleSheet? StyleSheet
+    {
+        get => _styleSheet;
+        set
+        {
+            if (_styleSheet != value)
+            {
+                _styleSheet = value;
+                InvalidateDescendantStyles();
+            }
+        }
+    }
+
+    private void InvalidateDescendantStyles()
+    {
+        if (FindVisualRoot() is Window window)
+        {
+            window.RefreshStyles(this, animate: true);
+            return;
+        }
+
+        // Includes self: a control hosting its own StyleSheet may resolve its
+        // StyleName from it (FindNamedStyle walks from the control itself).
+        VisualTree.Visit(this, element =>
+        {
+            if (element is Control control)
+                control.ResolveAndApplyStyle(animate: true);
+        });
+    }
+
+    private bool _disposed;
+
+    #region MewProperty Declarations
+
+    public static readonly MewProperty<double> WidthProperty =
+        MewProperty<double>.Register<FrameworkElement>(nameof(Width), double.NaN, MewPropertyOptions.AffectsLayout);
+
+    public static readonly MewProperty<double> HeightProperty =
+        MewProperty<double>.Register<FrameworkElement>(nameof(Height), double.NaN, MewPropertyOptions.AffectsLayout);
+
+    public static readonly MewProperty<double> MinWidthProperty =
+        MewProperty<double>.Register<FrameworkElement>(nameof(MinWidth), 0.0, MewPropertyOptions.AffectsLayout);
+
+    public static readonly MewProperty<double> MinHeightProperty =
+        MewProperty<double>.Register<FrameworkElement>(nameof(MinHeight), 0.0, MewPropertyOptions.AffectsLayout);
+
+    public static readonly MewProperty<double> MaxWidthProperty =
+        MewProperty<double>.Register<FrameworkElement>(nameof(MaxWidth), double.PositiveInfinity, MewPropertyOptions.AffectsLayout);
+
+    public static readonly MewProperty<double> MaxHeightProperty =
+        MewProperty<double>.Register<FrameworkElement>(nameof(MaxHeight), double.PositiveInfinity, MewPropertyOptions.AffectsLayout);
+
+    public static readonly MewProperty<Thickness> MarginProperty =
+        MewProperty<Thickness>.Register<FrameworkElement>(nameof(Margin), default, MewPropertyOptions.AffectsLayout);
+
+    public static readonly MewProperty<HorizontalAlignment> HorizontalAlignmentProperty =
+        MewProperty<HorizontalAlignment>.Register<FrameworkElement>(nameof(HorizontalAlignment), HorizontalAlignment.Stretch, MewPropertyOptions.AffectsLayout);
+
+    public static readonly MewProperty<VerticalAlignment> VerticalAlignmentProperty =
+        MewProperty<VerticalAlignment>.Register<FrameworkElement>(nameof(VerticalAlignment), VerticalAlignment.Stretch, MewPropertyOptions.AffectsLayout);
+
+    public static readonly MewProperty<object?> TagProperty =
+        MewProperty<object?>.Register<FrameworkElement>(nameof(Tag), null, MewPropertyOptions.None);
+
+    public static readonly MewProperty<Element?> ToolTipProperty =
+        MewProperty<Element?>.Register<FrameworkElement>(nameof(ToolTip), null, MewPropertyOptions.None);
+
+    public static readonly MewProperty<ContextMenu?> ContextMenuProperty =
+        MewProperty<ContextMenu?>.Register<FrameworkElement>(nameof(ContextMenu), null, MewPropertyOptions.None);
+
+    #endregion
+
+    private Point _lastMousePositionInWindow;
+
+    /// <summary>
+    /// Gets or sets what to show when the pointer rests on this element.
+    /// Use the <c>ToolTip(string)</c> extension method for simple text tooltips.
+    /// </summary>
+    public Element? ToolTip
+    {
+        get => GetValue(ToolTipProperty);
+        set => SetValue(ToolTipProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the menu shown when the pointer is right-pressed over this element.
+    /// </summary>
+    public ContextMenu? ContextMenu
+    {
+        get => GetValue(ContextMenuProperty);
+        set => SetValue(ContextMenuProperty, value);
+    }
+
+    protected override void OnMouseEnter()
+    {
+        base.OnMouseEnter();
+        ShowToolTip();
+    }
+
+    protected override void OnMouseLeave()
+    {
+        base.OnMouseLeave();
+        HideToolTip();
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        _lastMousePositionInWindow = e.Position;
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+
+        HideToolTip();
+
+        if (e.Handled)
+        {
+            return;
+        }
+
+        if (e.Button == MouseButton.Right && ContextMenu is ContextMenu menu)
+        {
+            if (menu.Placement == MenuPlacement.Pointer)
+            {
+                menu.Show(this, e.Position);
+            }
+            else
+            {
+                menu.Show(this);
+            }
+
+            e.Handled = true;
+        }
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+
+        if (e.Handled)
+        {
+            return;
+        }
+
+        HideToolTip();
+    }
+
+    /// <summary>
+    /// What to show when the pointer rests on this element, or <see langword="null"/> to show nothing.
+    /// Called each time a tooltip is about to appear, so an element that builds its content from something
+    /// that changes can build it here rather than keeping <see cref="ToolTip"/> in step.
+    /// </summary>
+    protected virtual Element? ResolveToolTipContent() => ToolTip;
+
+    internal Element? ResolveToolTipContentInternal() => ResolveToolTipContent();
+
+    private void ShowToolTip()
+    {
+        if (!IsMouseOver)
+        {
+            return;
+        }
+
+        if (ResolveToolTipContent() is not Element content)
+        {
+            return;
+        }
+
+        var root = FindVisualRoot();
+        if (root is not Window window)
+        {
+            return;
+        }
+
+        var anchor = window.LastMousePositionDip;
+        if (anchor.X == 0 && anchor.Y == 0)
+        {
+            anchor = _lastMousePositionInWindow;
+        }
+        if (anchor.X == 0 && anchor.Y == 0 && Bounds.Width > 0 && Bounds.Height > 0)
+        {
+            anchor = new Point(Bounds.X + Bounds.Width / 2, Bounds.Bottom);
+        }
+
+        var region = window.GetPopupPlacementRegion(new Rect(anchor.X, anchor.Y, 0, 0));
+        var measureSize = new Size(Math.Max(0, region.Width), Math.Max(0, region.Height));
+
+        window.ShowToolTip(this, content, measureSize, desired =>
+        {
+            const double dx = 12;
+            const double dy = 18;
+            double w = Math.Max(0, desired.Width);
+            double h = Math.Max(0, desired.Height);
+
+            double x = PopupPlacement.ClampHorizontal(anchor.X + dx, w, region, floorToLeftEdge: false);
+            double y = anchor.Y + dy;
+
+            if (y + h > region.Bottom)
+            {
+                y = Math.Max(region.Y, anchor.Y - h - dy);
+            }
+
+            return new Rect(x, y, w, h);
+        });
+    }
+
+    private protected void HideToolTip()
+    {
+        var root = FindVisualRoot();
+        if (root is not Window window)
+        {
+            return;
+        }
+
+        window.CloseToolTip(this);
+    }
+
+    /// <summary>
+    /// Occurs when the element's size changes.
+    /// </summary>
+    public event Action<SizeChangedEventArgs>? SizeChanged;
+
+    /// <summary>
+    /// Gets or sets the explicit width. Use double.NaN for automatic sizing.
+    /// </summary>
+    public double Width
+    {
+        get => GetValue(WidthProperty);
+        set => SetValue(WidthProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the explicit height. Use double.NaN for automatic sizing.
+    /// </summary>
+    public double Height
+    {
+        get => GetValue(HeightProperty);
+        set => SetValue(HeightProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the minimum width.
+    /// </summary>
+    public double MinWidth
+    {
+        get => GetValue(MinWidthProperty);
+        set
+        {
+            if (value < 0)
+                throw new ArgumentOutOfRangeException(nameof(value), "MinWidth must be 0 or greater.");
+            SetValue(MinWidthProperty, value);
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets the minimum height.
+    /// </summary>
+    public double MinHeight
+    {
+        get => GetValue(MinHeightProperty);
+        set
+        {
+            if (value < 0)
+                throw new ArgumentOutOfRangeException(nameof(value), "MinHeight must be 0 or greater.");
+            SetValue(MinHeightProperty, value);
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets the maximum width.
+    /// </summary>
+    public double MaxWidth
+    {
+        get => GetValue(MaxWidthProperty);
+        set
+        {
+            if (value < 0)
+                throw new ArgumentOutOfRangeException(nameof(value), "MaxWidth must be 0 or greater.");
+            SetValue(MaxWidthProperty, value);
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets the maximum height.
+    /// </summary>
+    public double MaxHeight
+    {
+        get => GetValue(MaxHeightProperty);
+        set
+        {
+            if (value < 0)
+                throw new ArgumentOutOfRangeException(nameof(value), "MaxHeight must be 0 or greater.");
+            SetValue(MaxHeightProperty, value);
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets the outer margin.
+    /// </summary>
+    public Thickness Margin
+    {
+        get => GetValue(MarginProperty);
+        set => SetValue(MarginProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the horizontal alignment within the parent.
+    /// </summary>
+    public HorizontalAlignment HorizontalAlignment
+    {
+        get => GetValue(HorizontalAlignmentProperty);
+        set => SetValue(HorizontalAlignmentProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the vertical alignment within the parent.
+    /// </summary>
+    public VerticalAlignment VerticalAlignment
+    {
+        get => GetValue(VerticalAlignmentProperty);
+        set => SetValue(VerticalAlignmentProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets an arbitrary object value for custom use.
+    /// </summary>
+    public object? Tag
+    {
+        get => GetValue(TagProperty);
+        set => SetValue(TagProperty, value);
+    }
+
+    /// <summary>
+    /// Gets the actual width after layout.
+    /// </summary>
+    public double ActualWidth => Bounds.Width;
+
+    /// <summary>
+    /// Gets the actual height after layout.
+    /// </summary>
+    public double ActualHeight => Bounds.Height;
+
+    /// <summary>
+    /// Gets the current DPI value.
+    /// </summary>
+    /// <returns>The DPI value.</returns>
+    public uint GetDpi() => GetDpiCached();
+
+    protected Theme Theme => ThemeInternal;
+
+    internal Theme ThemeInternal
+    {
+        get
+        {
+            if (Application.IsRunning)
+            {
+                if (GetValue(ThemeProperty) is null)
+                {
+                    SetValue(ThemeProperty, Application.Current.Theme);
+                }
+                return GetValue(ThemeProperty);
+            }
+            else
+            {
+                // Stamp the provisional pre-run resolution so Window.Show can reconcile it once Run decides the theme.
+                if (GetValue(ThemeProperty) is null)
+                {
+                    SetValue(ThemeProperty, ThemeManager.GetDefaultTheme(ThemeManager.ResolveVariantForStartup(ThemeManager.Default)));
+                }
+                return GetValue(ThemeProperty);
+            }
+        }
+        set => SetValue(ThemeProperty, value);
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+
+        HideToolTip();
+
+        // Release extension-managed bindings (and any other UIElement-registered disposables).
+        DisposeBindings();
+
+        OnDispose();
+    }
+
+    internal void NotifyDpiChanged(uint oldDpi, uint newDpi)
+    {
+        OnDpiChanged(oldDpi, newDpi);
+
+        InvalidateMeasure();
+        InvalidateVisual();
+    }
+
+    internal void NotifyThemeChanged(Theme oldTheme, Theme newTheme)
+    {
+        ThemeInternal = newTheme;
+
+        OnThemeChanged(oldTheme, newTheme);
+        InvokeThemeCallbacks(newTheme);
+
+        // Theme-resolver setters in active element triggers resolve against the new theme.
+        if (!ReferenceEquals(oldTheme, newTheme))
+        {
+            EvaluateElementTriggers();
+        }
+
+        // Theme changes should cause a repaint even if no other input/layout happens.
+        // This is especially important on platforms where theme notifications are not tied to OS paint messages.
+        if (!ReferenceEquals(oldTheme, newTheme))
+        {
+            InvalidateMeasure();
+            InvalidateVisual();
+        }
+    }
+
+    /// <summary>Re-runs the theme pass when this element's stored theme differs from <paramref name="currentTheme"/>.</summary>
+    internal void ReconcileTheme(Theme currentTheme)
+    {
+        var stored = GetValue(ThemeProperty);
+        if (stored is null || stored == currentTheme)
+        {
+            return;
+        }
+
+        NotifyThemeChanged(stored, currentTheme);
+    }
+
+    internal void RegisterThemeCallback(Action<Theme, FrameworkElement> callback, bool invokeImmediately = true)
+    {
+        ArgumentNullException.ThrowIfNull(callback);
+
+        _themeCallbacks ??= new List<Action<Theme, FrameworkElement>>(capacity: 1);
+        _themeCallbacks.Add(callback);
+
+        if (invokeImmediately)
+        {
+            callback(ThemeInternal, this);
+        }
+    }
+
+    /// <summary>
+    /// Called when the element is being disposed. Override to release resources.
+    /// </summary>
+    protected virtual void OnDispose()
+    { }
+
+    /// <summary>
+    /// Snaps the border bounds to device pixels for crisp rendering.
+    /// </summary>
+    /// <param name="bounds">The bounds to snap.</param>
+    /// <returns>Pixel-snapped bounds.</returns>
+    protected Rect GetSnappedBorderBounds(Rect bounds)
+    {
+        var dpiScale = GetDpi() / 96.0;
+        return LayoutRounding.SnapBoundsRectToPixels(bounds, dpiScale);
+    }
+
+    /// <summary>
+    /// Called when the DPI changes.
+    /// </summary>
+    /// <param name="oldDpi">The old DPI value.</param>
+    /// <param name="newDpi">The new DPI value.</param>
+    protected virtual void OnDpiChanged(uint oldDpi, uint newDpi)
+    {
+    }
+
+    /// <summary>
+    /// Gets the process-wide graphics factory. Safe to call off the UI thread: unlike a
+    /// <see cref="Element.FindVisualRoot"/> lookup, it never touches the (UI-thread-only) Parent chain.
+    /// </summary>
+    /// <returns>The graphics factory.</returns>
+    protected IGraphicsFactory GetGraphicsFactory()
+        => Application.IsRunning ? Application.Current.GraphicsFactory : Application.DefaultGraphicsFactory;
+
+    /// <summary>
+    /// Called when the theme changes.
+    /// </summary>
+    /// <param name="oldTheme">The old theme.</param>
+    /// <param name="newTheme">The new theme.</param>
+    protected virtual void OnThemeChanged(Theme oldTheme, Theme newTheme)
+    { }
+
+    /// <summary>
+    /// Called when the element's size changes.
+    /// </summary>
+    /// <param name="e">Size change event arguments.</param>
+    protected virtual void OnSizeChanged(SizeChangedEventArgs e)
+    { }
+
+    protected override void OnVisualRootChanged(Element? oldRoot, Element? newRoot)
+    {
+        base.OnVisualRootChanged(oldRoot, newRoot);
+
+        if (newRoot == null)
+        {
+            return;
+        }
+
+        // DPI, like theme, is broadcast only to attached elements. A detached subtree (e.g. a cached
+        // navigation page) that resolved a different DPI keeps stale, DPI-baked font caches; re-run the
+        // standard DpiChanged pass so measure and fonts refresh. The DPI cache was invalidated by the
+        // context-version bump and re-resolves lazily, so don't stamp it - at startup the window may not
+        // know its real DPI yet, and comparing against a stamped value would suppress the first change.
+        uint previousDpi = LastResolvedDpi;
+        uint newDpi = newRoot is Window window ? window.Dpi : 0;
+        if (previousDpi != 0 && newDpi != 0 && previousDpi != newDpi)
+        {
+            NotifyDpiChanged(previousDpi, newDpi);
+        }
+
+        // Theme changes are broadcast only to elements currently in the visual tree.
+        // Elements that were detached (e.g. recycled/pooled item containers) may retain a stale ThemeInternal.
+        // When re-attached, refresh theme so controls render with the current theme without requiring re-binding.
+        if (!Application.IsRunning)
+        {
+            return;
+        }
+
+        var newTheme = Application.Current.Theme;
+        // Read the stored value directly. ThemeInternal's getter initializes a null value from the
+        // current application theme, which would make oldTheme == newTheme and suppress the
+        // OnThemeChanged notification for a detached element that rendered with the startup theme.
+        var oldTheme = GetValue(ThemeProperty);
+        if (oldTheme is null)
+        {
+            oldTheme = ThemeManager.GetDefaultTheme(
+                ThemeManager.ResolveVariantForStartup(ThemeManager.Default));
+        }
+        if (oldTheme != newTheme)
+        {
+            NotifyThemeChanged(oldTheme, newTheme);
+        }
+        else
+        {
+            ThemeInternal = newTheme;
+        }
+    }
+
+    protected override void ArrangeCore(Rect finalRect)
+    {
+        var oldSize = _lastArrangedSize;
+        var hadOldSize = _hasArrangedSize;
+
+        base.ArrangeCore(finalRect);
+
+        if (!IsVisible)
+        {
+            return;
+        }
+
+        var newSize = new Size(Bounds.Width, Bounds.Height);
+        if (!hadOldSize || oldSize != newSize)
+        {
+            _lastArrangedSize = newSize;
+            _hasArrangedSize = true;
+
+            var args = new SizeChangedEventArgs(hadOldSize ? oldSize : Size.Empty, newSize);
+            OnSizeChanged(args);
+            SizeChanged?.Invoke(args);
+        }
+    }
+
+    protected override Rect GetArrangedBounds(Rect finalRect)
+    {
+        var innerSlot = finalRect.Deflate(Margin);
+
+        double availableWidth = Math.Max(0, innerSlot.Width);
+        double availableHeight = Math.Max(0, innerSlot.Height);
+
+        // If we have explicit size, use it; otherwise use desired (excluding margin)
+        double arrangeWidth = !double.IsNaN(Width) ? Width : DesiredSize.Width - Margin.Left - Margin.Right;
+        double arrangeHeight = !double.IsNaN(Height) ? Height : DesiredSize.Height - Margin.Top - Margin.Bottom;
+
+        arrangeWidth = Math.Clamp(arrangeWidth, MinWidth, MaxWidth);
+        arrangeHeight = Math.Clamp(arrangeHeight, MinHeight, MaxHeight);
+
+        // Auto-sized elements stretch to fill the slot. Otherwise preserve the explicit or
+        // desired size after min/max constraints, even when it exceeds the available slot.
+        double width = (HorizontalAlignment == HorizontalAlignment.Stretch && double.IsNaN(Width))
+            ? availableWidth
+            : arrangeWidth;
+
+        double height = (VerticalAlignment == VerticalAlignment.Stretch && double.IsNaN(Height))
+            ? availableHeight
+            : arrangeHeight;
+
+        double x = innerSlot.X;
+        if (HorizontalAlignment == HorizontalAlignment.Center)
+        {
+            x = innerSlot.X + (availableWidth - width) / 2;
+        }
+        else if (HorizontalAlignment == HorizontalAlignment.Right)
+        {
+            x = innerSlot.Right - width;
+        }
+
+        double y = innerSlot.Y;
+        if (VerticalAlignment == VerticalAlignment.Center)
+        {
+            y = innerSlot.Y + (availableHeight - height) / 2;
+        }
+        else if (VerticalAlignment == VerticalAlignment.Bottom)
+        {
+            y = innerSlot.Bottom - height;
+        }
+
+        return new Rect(x, y, width, height);
+    }
+
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        // Available content space, after margin (used when Width/Height is auto).
+        var availableWidth = Math.Max(0, availableSize.Width - Margin.HorizontalThickness);
+        var availableHeight = Math.Max(0, availableSize.Height - Margin.VerticalThickness);
+
+        // Measure content with explicit Width/Height when set; otherwise use the available
+        // content size. Clamp both cases to [Min, Max] so wrapped content respects MaxWidth.
+        var constrainedWidth = Math.Clamp(double.IsNaN(Width) ? availableWidth : Width, MinWidth, MaxWidth);
+        var constrainedHeight = Math.Clamp(double.IsNaN(Height) ? availableHeight : Height, MinHeight, MaxHeight);
+
+        var measured = MeasureContent(new Size(constrainedWidth, constrainedHeight));
+
+        // Desired size honors explicit Width/Height when set (else the measured size), clamped, plus margin.
+        var finalWidth = Math.Clamp(double.IsNaN(Width) ? measured.Width : Width, MinWidth, MaxWidth);
+        var finalHeight = Math.Clamp(double.IsNaN(Height) ? measured.Height : Height, MinHeight, MaxHeight);
+
+        return new Size(finalWidth + Margin.HorizontalThickness, finalHeight + Margin.VerticalThickness);
+    }
+
+    /// <summary>
+    /// Measures the content. Override in derived classes.
+    /// </summary>
+    protected virtual Size MeasureContent(Size availableSize) => Size.Empty;
+
+    protected override Size ArrangeOverride(Size finalSize)
+    {
+        ArrangeContent(Bounds);
+        return finalSize;
+    }
+
+    /// <summary>
+    /// Arranges the content. Override in derived classes.
+    /// </summary>
+    protected virtual void ArrangeContent(Rect bounds)
+    { }
+
+    private void InvokeThemeCallbacks(Theme theme)
+    {
+        if (_themeCallbacks == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < _themeCallbacks.Count; i++)
+        {
+            _themeCallbacks[i](theme, this);
+        }
+    }
+}

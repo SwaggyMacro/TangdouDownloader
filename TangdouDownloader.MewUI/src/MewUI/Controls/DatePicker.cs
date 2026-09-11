@@ -1,0 +1,252 @@
+using Aprillz.MewUI.Rendering;
+using Aprillz.MewUI.Text;
+
+namespace Aprillz.MewUI.Controls;
+
+/// <summary>
+/// A drop-down control that allows selecting a date via an embedded <see cref="Calendar"/>.
+/// </summary>
+public sealed partial class DatePicker : DropDownBase
+{
+    static DatePicker() { }
+
+    private static readonly bool _popupStyleRegistered =
+        FrameworkNamedStyles.Register("datepicker-popup", BuiltInStyles.CreateDatePickerPopupStyle);
+
+    private Calendar? _calendar;
+    private bool _syncingCalendar;
+    private DateTime? _cachedHeaderDate;
+    private string? _cachedHeaderFormat;
+    private string? _cachedHeaderText;
+
+    public static readonly MewProperty<DateTime?> SelectedDateProperty =
+        MewProperty<DateTime?>.Register<DatePicker>(nameof(SelectedDate), null,
+            MewPropertyOptions.AffectsRender | MewPropertyOptions.BindsTwoWayByDefault,
+            static (self, oldValue, newValue) => self.OnSelectedDatePropertyChanged(oldValue, newValue));
+
+    public static readonly MewProperty<string> PlaceholderProperty =
+        MewProperty<string>.Register<DatePicker>(nameof(Placeholder), string.Empty, MewPropertyOptions.AffectsRender);
+
+    public static readonly MewProperty<string> DateFormatProperty =
+        MewProperty<string>.Register<DatePicker>(nameof(DateFormat), "yyyy-MM-dd", MewPropertyOptions.AffectsRender);
+
+    public static readonly MewProperty<DayOfWeek> FirstDayOfWeekProperty =
+        MewProperty<DayOfWeek>.Register<DatePicker>(nameof(FirstDayOfWeek), DayOfWeek.Sunday);
+
+    /// <summary>Gets or sets the selected date.</summary>
+    public DateTime? SelectedDate
+    {
+        get => GetValue(SelectedDateProperty);
+        set => SetValue(SelectedDateProperty, value);
+    }
+
+    /// <summary>Gets or sets the placeholder text shown when no date is selected.</summary>
+    public string Placeholder
+    {
+        get => GetValue(PlaceholderProperty);
+        set => SetValue(PlaceholderProperty, value ?? string.Empty);
+    }
+
+    /// <summary>Gets or sets the date display format string.</summary>
+    public string DateFormat
+    {
+        get => GetValue(DateFormatProperty);
+        set => SetValue(DateFormatProperty, value ?? "yyyy-MM-dd");
+    }
+
+    /// <summary>Gets or sets the first day of the week for the calendar popup.</summary>
+    public DayOfWeek FirstDayOfWeek
+    {
+        get => GetValue(FirstDayOfWeekProperty);
+        set => SetValue(FirstDayOfWeekProperty, value);
+    }
+
+    /// <summary>Raised when the selected date changes.</summary>
+    public event Action<DateTime?>? SelectedDateChanged;
+
+    private void OnSelectedDatePropertyChanged(DateTime? oldValue, DateTime? newValue)
+    {
+        if (_calendar != null)
+            SyncCalendarSelectedDate(newValue);
+
+        SelectedDateChanged?.Invoke(newValue);
+    }
+
+    protected override UIElement CreatePopupContent()
+    {
+        _calendar = new Calendar
+        {
+            FirstDayOfWeek = FirstDayOfWeek,
+            StyleName = BuiltInStyles.DatePickerPopup,
+        };
+
+        if (SelectedDate.HasValue)
+        {
+            SyncCalendarSelectedDate(SelectedDate);
+            _calendar.DisplayDate = SelectedDate.Value;
+        }
+
+        _calendar.SelectedDateChanged += OnCalendarSelectedDateChanged;
+        _calendar.DateActivated += OnCalendarDateActivated;
+        return _calendar;
+    }
+
+    protected override void SyncPopupContent(UIElement popup)
+    {
+        // Only sync lightweight properties that the owner may change while open.
+        // Avoid overwriting DisplayDate/DisplayMode/SelectedDate - the Calendar
+        // manages those internally (nav buttons, mode drill-down, etc.) and
+        // SyncPopupContent is called every render frame via UpdatePopupBoundsCore.
+        if (_calendar == null) return;
+
+        _calendar.FirstDayOfWeek = FirstDayOfWeek;
+    }
+
+    protected override void OnIsDropDownOpenChanged(bool oldValue, bool newValue)
+    {
+        if (newValue && _calendar != null)
+        {
+            // Sync full state only when opening
+            if (SelectedDate.HasValue)
+            {
+                SyncCalendarSelectedDate(SelectedDate);
+                _calendar.DisplayDate = SelectedDate.Value;
+            }
+
+            _calendar.DisplayMode = CalendarMode.Month;
+        }
+
+        base.OnIsDropDownOpenChanged(oldValue, newValue);
+    }
+
+    protected override UIElement GetPopupFocusTarget(UIElement popup) => popup;
+
+    private void OnCalendarSelectedDateChanged(DateTime? date)
+    {
+        if (_syncingCalendar)
+        {
+            return;
+        }
+
+        // Sync value during navigation (keyboard arrows) without closing popup.
+        if (date.HasValue)
+        {
+            CommitTargetValue(SelectedDateProperty, date);
+        }
+    }
+
+    private void SyncCalendarSelectedDate(DateTime? date)
+    {
+        if (_calendar == null)
+        {
+            return;
+        }
+
+        _syncingCalendar = true;
+        try
+        {
+            _calendar.SelectedDate = date;
+        }
+        finally
+        {
+            _syncingCalendar = false;
+        }
+    }
+
+    private void OnCalendarDateActivated(DateTime date)
+    {
+        // Commit action (mouse click or Enter key) - close popup.
+        CommitTargetValue(SelectedDateProperty, date);
+        IsDropDownOpen = false;
+    }
+
+    protected override Size MeasureHeader(Size availableSize)
+    {
+        var headerHeight = ResolveHeaderHeight();
+
+        // Measure a representative date string to determine width
+        string sample = DateTime.Today.ToString(DateFormat);
+        var style = GetTextRunStyle();
+        var textSize = TextLayoutOperations.Measure(GetGraphicsFactory(), sample, GetDpi(), in style);
+
+        double width = textSize.Width + ArrowAreaWidth;
+        return new Size(width, headerHeight);
+    }
+
+    protected override void RenderHeaderContent(IGraphicsContext context, Rect headerRect, Rect innerHeaderRect)
+    {
+        var textRect = new Rect(
+            innerHeaderRect.X,
+            innerHeaderRect.Y,
+            innerHeaderRect.Width - ArrowAreaWidth,
+            innerHeaderRect.Height).Deflate(Padding);
+
+        var state = CurrentVisualState;
+        string? text = null;
+        Color textColor = default;
+
+        if (SelectedDate.HasValue)
+        {
+            var date = SelectedDate.Value;
+            var fmt = DateFormat;
+            if (_cachedHeaderText == null || _cachedHeaderDate != date || _cachedHeaderFormat != fmt)
+            {
+                _cachedHeaderDate = date;
+                _cachedHeaderFormat = fmt;
+                _cachedHeaderText = date.ToString(fmt);
+            }
+            text = _cachedHeaderText;
+            textColor = state.IsEnabled ? Foreground : Theme.Palette.DisabledText;
+        }
+        else if (!string.IsNullOrEmpty(Placeholder) && !state.IsFocused)
+        {
+            text = Placeholder;
+            textColor = Theme.Palette.PlaceholderText;
+        }
+
+        if (!string.IsNullOrEmpty(text))
+        {
+            var style = GetTextRunStyle();
+            var layout = TextLayoutOperations.GetOrCreate(
+                GetGraphicsFactory(), text, GetDpi(), in style, textRect.Width, textRect.Height);
+            TextLayoutOperations.DrawInBounds(
+                context, layout, textRect, textColor, TextAlignment.Center, this);
+        }
+    }
+
+    protected override Rect CalculatePopupBounds(Window window, UIElement popup)
+    {
+        var bounds = Bounds;
+        var region = window.GetPopupPlacementRegion(bounds);
+
+        // Calendar measures itself - use its desired size
+        popup.Measure(new Size(region.Width, region.Height));
+        double popupW = Math.Max(popup.DesiredSize.Width, bounds.Width);
+        double popupH = popup.DesiredSize.Height;
+
+        double x = PopupPlacement.ClampHorizontal(bounds.X, popupW, region, floorToLeftEdge: false);
+
+        double belowY = bounds.Y + ResolveHeaderHeight();
+        var (y, height) = PopupPlacement.ResolveVerticalPreferBelowIfFits(bounds.Y, belowY, region, popupH);
+
+        return new Rect(x, y, popupW, height);
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (!IsEffectivelyEnabled || e.Handled)
+        {
+            base.OnKeyDown(e);
+            return;
+        }
+
+        // Allow Escape in Calendar to drill up modes before closing the dropdown
+        if (e.Key == Key.Escape && IsDropDownOpen && _calendar != null && _calendar.DisplayMode != CalendarMode.Month)
+        {
+            // Let Calendar handle it (mode drill-up)
+            return;
+        }
+
+        base.OnKeyDown(e);
+    }
+}

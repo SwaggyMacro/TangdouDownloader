@@ -1,0 +1,704 @@
+namespace Aprillz.MewUI.Controls;
+
+/// <summary>
+/// Fluent extension methods for configuring <see cref="GridView"/> and <see cref="GridViewColumn{TItem}"/>.
+/// </summary>
+public static class GridViewExtensions
+{
+    /// <summary>Sets a custom visual template for a column header.</summary>
+    public static GridViewColumn<TItem> HeaderTemplate<TItem>(
+        this GridViewColumn<TItem> column,
+        IDataTemplate template)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+        ArgumentNullException.ThrowIfNull(template);
+        column.HeaderTemplate = template;
+        return column;
+    }
+
+    /// <summary>Sets a custom visual template for a column header.</summary>
+    public static GridViewColumn<TItem> HeaderTemplate<TItem>(
+        this GridViewColumn<TItem> column,
+        Func<TemplateContext, FrameworkElement> build,
+        Action<FrameworkElement>? bind = null)
+    {
+        ArgumentNullException.ThrowIfNull(build);
+        return column.HeaderTemplate(new DelegateTemplate<object?>(
+            build,
+            (view, _, _, _) => bind?.Invoke(view)));
+    }
+    /// <summary>
+    /// Sets the row height.
+    /// </summary>
+    /// <param name="gridView">Target grid view.</param>
+    /// <param name="rowHeight">Row height in DIPs.</param>
+    /// <returns>The grid view for chaining.</returns>
+    public static GridView RowHeight(this GridView gridView, double rowHeight)
+    {
+        ArgumentNullException.ThrowIfNull(gridView);
+        gridView.RowHeight = rowHeight;
+        return gridView;
+    }
+
+    /// <summary>
+    /// Sets the header row height.
+    /// </summary>
+    /// <param name="gridView">Target grid view.</param>
+    /// <param name="headerHeight">Header height in DIPs.</param>
+    /// <returns>The grid view for chaining.</returns>
+    public static GridView HeaderHeight(this GridView gridView, double headerHeight)
+    {
+        ArgumentNullException.ThrowIfNull(gridView);
+        gridView.HeaderHeight = headerHeight;
+        return gridView;
+    }
+
+    /// <summary>
+    /// Sets the cell padding applied to each cell in a row.
+    /// </summary>
+    /// <param name="gridView">Target grid view.</param>
+    /// <param name="cellPadding">Cell padding in DIPs.</param>
+    /// <returns>The grid view for chaining.</returns>
+    public static GridView CellPadding(this GridView gridView, Thickness cellPadding)
+    {
+        ArgumentNullException.ThrowIfNull(gridView);
+        gridView.CellPadding = cellPadding;
+        return gridView;
+    }
+
+    /// <summary>
+    /// Sets the maximum automatically sized viewport height.
+    /// </summary>
+    /// <param name="gridView">Target grid view.</param>
+    /// <param name="value">Maximum viewport height in DIPs.</param>
+    /// <returns>The grid view for chaining.</returns>
+    public static GridView MaxAutoViewportHeight(this GridView gridView, double value)
+    {
+        gridView.MaxAutoViewportHeight = value;
+        return gridView;
+    }
+
+    /// <summary>
+    /// Sets the selected row index.
+    /// </summary>
+    /// <param name="gridView">Target grid view.</param>
+    /// <param name="value">Selected row index.</param>
+    /// <returns>The grid view for chaining.</returns>
+    public static GridView SelectedIndex(this GridView gridView, int value)
+    {
+        gridView.SelectedIndex = value;
+        return gridView;
+    }
+
+    /// <summary>
+    /// Adds a selection change handler.
+    /// </summary>
+    /// <param name="gridView">Target grid view.</param>
+    /// <param name="handler">Event handler.</param>
+    /// <returns>The grid view for chaining.</returns>
+    public static GridView OnSelectionChanged(this GridView gridView, Action<object?> handler)
+    {
+        gridView.SelectionChanged += handler;
+        return gridView;
+    }
+
+    /// <summary>Applies an initial local single-column sort.</summary>
+    public static GridView SortByColumn(
+        this GridView gridView,
+        int columnIndex,
+        GridViewSortDirection direction = GridViewSortDirection.Ascending)
+    {
+        ArgumentNullException.ThrowIfNull(gridView);
+        gridView.SortByColumn(columnIndex, direction);
+        return gridView;
+    }
+
+    /// <summary>Adds a local sort change handler.</summary>
+    public static GridView OnSortChanged(this GridView gridView, Action<GridViewSortChange> handler)
+    {
+        ArgumentNullException.ThrowIfNull(gridView);
+        ArgumentNullException.ThrowIfNull(handler);
+        gridView.SortChanged += handler;
+        return gridView;
+    }
+
+    /// <summary>
+    /// Enables or disables zebra striping.
+    /// </summary>
+    /// <param name="gridView">Target grid view.</param>
+    /// <param name="enabled"><see langword="true"/> to enable striping; otherwise, <see langword="false"/>.</param>
+    /// <returns>The grid view for chaining.</returns>
+    public static GridView ZebraStriping(this GridView gridView, bool enabled = true)
+    {
+        ArgumentNullException.ThrowIfNull(gridView);
+        gridView.ZebraStriping = enabled;
+        return gridView;
+    }
+
+    /// <summary>
+    /// Enables or disables grid lines.
+    /// </summary>
+    /// <param name="gridView">Target grid view.</param>
+    /// <param name="enabled"><see langword="true"/> to show grid lines; otherwise, <see langword="false"/>.</param>
+    /// <returns>The grid view for chaining.</returns>
+    public static GridView ShowGridLines(this GridView gridView, bool enabled = true)
+    {
+        ArgumentNullException.ThrowIfNull(gridView);
+        gridView.ShowGridLines = enabled;
+        return gridView;
+    }
+
+    /// <summary>
+    /// Adds one or more columns to the grid view.
+    /// </summary>
+    /// <typeparam name="TItem">Item type.</typeparam>
+    /// <param name="gridView">Target grid view.</param>
+    /// <param name="columns">Columns to add.</param>
+    /// <returns>The grid view for chaining.</returns>
+    public static GridView Columns<TItem>(this GridView gridView, params GridViewColumn<TItem>[] columns)
+    {
+        ArgumentNullException.ThrowIfNull(gridView);
+        ArgumentNullException.ThrowIfNull(columns);
+        gridView.AddColumns(columns);
+        return gridView;
+    }
+
+    /// <summary>
+    /// Sets the item source from a list.
+    /// </summary>
+    /// <typeparam name="TItem">Item type.</typeparam>
+    /// <param name="gridView">Target grid view.</param>
+    /// <param name="items">Items to display.</param>
+    /// <returns>The grid view for chaining.</returns>
+    public static GridView ItemsSource<TItem>(this GridView gridView, IReadOnlyList<TItem> items)
+    {
+        ArgumentNullException.ThrowIfNull(gridView);
+        ArgumentNullException.ThrowIfNull(items);
+        gridView.ItemsSource = ItemsView.Create(items);
+        return gridView;
+    }
+
+    /// <summary>
+    /// Sets the item source from an <see cref="ItemsView{T}"/>.
+    /// </summary>
+    /// <typeparam name="TItem">Item type.</typeparam>
+    /// <param name="gridView">Target grid view.</param>
+    /// <param name="itemsView">Items view to display.</param>
+    /// <returns>The grid view for chaining.</returns>
+    public static GridView ItemsSource<TItem>(this GridView gridView, ItemsView<TItem> itemsView)
+    {
+        ArgumentNullException.ThrowIfNull(gridView);
+        ArgumentNullException.ThrowIfNull(itemsView);
+        gridView.ItemsSource = itemsView;
+        return gridView;
+    }
+
+    /// <summary>
+    /// Adds a column using Auto, Star, or Pixel sizing.
+    /// </summary>
+    public static GridView AddColumn<TItem>(
+        this GridView gridView,
+        string header,
+        GridLength width,
+        IDataTemplate<TItem> template,
+        double minWidth = 0,
+        double maxWidth = double.PositiveInfinity,
+        bool resizable = true)
+    {
+        ArgumentNullException.ThrowIfNull(gridView);
+        ArgumentNullException.ThrowIfNull(template);
+
+        gridView.AddColumns(new GridViewColumn<TItem>
+        {
+            Header = header ?? string.Empty,
+            Width = width,
+            CellTemplate = template,
+            MinWidth = minWidth,
+            MaxWidth = maxWidth,
+            IsResizable = resizable,
+        });
+        return gridView;
+    }
+
+    /// <summary>
+    /// Adds a column.
+    /// </summary>
+    /// <typeparam name="TItem">Item type.</typeparam>
+    /// <param name="gridView">Target grid view.</param>
+    /// <param name="header">Column header text.</param>
+    /// <param name="width">Column width in DIPs.</param>
+    /// <param name="template">Cell template.</param>
+    /// <param name="minWidth">Minimum column width (0 = no minimum).</param>
+    /// <param name="resizable">Whether the column can be resized.</param>
+    /// <returns>The grid view for chaining.</returns>
+    public static GridView AddColumn<TItem>(
+        this GridView gridView,
+        string header,
+        double width,
+        IDataTemplate<TItem> template,
+        double minWidth = 0,
+        bool resizable = true)
+        => AddColumn(gridView, header, GridLength.Pixels(width), template, minWidth, double.PositiveInfinity, resizable);
+
+    /// <summary>
+    /// Adds a fixed-width column with minimum and maximum constraints.
+    /// </summary>
+    public static GridView AddColumn<TItem>(
+        this GridView gridView,
+        string header,
+        double width,
+        IDataTemplate<TItem> template,
+        double minWidth,
+        double maxWidth,
+        bool resizable = true)
+        => AddColumn(gridView, header, GridLength.Pixels(width), template, minWidth, maxWidth, resizable);
+
+    /// <summary>
+    /// Adds an Auto, Star, or Pixel column using delegate-based templating.
+    /// </summary>
+    public static GridView AddColumn<TItem>(
+        this GridView gridView,
+        string header,
+        GridLength width,
+        Func<TemplateContext, FrameworkElement> build,
+        Action<FrameworkElement, TItem, int, TemplateContext> bind,
+        double minWidth = 0,
+        double maxWidth = double.PositiveInfinity,
+        bool resizable = true)
+        => AddColumn(gridView, header, width, new DelegateTemplate<TItem>(build, bind), minWidth, maxWidth, resizable);
+
+    /// <summary>
+    /// Adds a column using delegate-based templating.
+    /// </summary>
+    /// <typeparam name="TItem">Item type.</typeparam>
+    /// <param name="gridView">Target grid view.</param>
+    /// <param name="header">Column header text.</param>
+    /// <param name="width">Column width in DIPs.</param>
+    /// <param name="build">Template build callback.</param>
+    /// <param name="bind">Template bind callback.</param>
+    /// <param name="minWidth">Minimum column width (0 = no minimum).</param>
+    /// <param name="resizable">Whether the column can be resized.</param>
+    /// <returns>The grid view for chaining.</returns>
+    public static GridView AddColumn<TItem>(
+        this GridView gridView,
+        string header,
+        double width,
+        Func<TemplateContext, FrameworkElement> build,
+        Action<FrameworkElement, TItem, int, TemplateContext> bind,
+        double minWidth = 0,
+        bool resizable = true)
+        => AddColumn(gridView, header, width, new DelegateTemplate<TItem>(build, bind), minWidth, resizable);
+
+    public static GridView AddColumn<TItem>(
+        this GridView gridView,
+        string header,
+        double width,
+        Func<TemplateContext, FrameworkElement> build,
+        Action<FrameworkElement, TItem, int, TemplateContext> bind,
+        double minWidth,
+        double maxWidth,
+        bool resizable = true)
+        => AddColumn(gridView, header, GridLength.Pixels(width), new DelegateTemplate<TItem>(build, bind), minWidth, maxWidth, resizable);
+
+    public static GridView AddColumn<TItem>(
+        this GridView gridView,
+        string header,
+        GridLength width,
+        Func<TemplateContext, FrameworkElement> build,
+        Action<FrameworkElement, TItem, int, TemplateContext> bind,
+        Action<FrameworkElement, TItem, int, TemplateContext> unbind,
+        double minWidth = 0,
+        double maxWidth = double.PositiveInfinity,
+        bool resizable = true)
+        => AddColumn(gridView, header, width, new DelegateTemplate<TItem>(build, bind, unbind), minWidth, maxWidth, resizable);
+
+    public static GridView AddColumn<TItem>(
+        this GridView gridView,
+        string header,
+        double width,
+        Func<TemplateContext, FrameworkElement> build,
+        Action<FrameworkElement, TItem, int, TemplateContext> bind,
+        Action<FrameworkElement, TItem, int, TemplateContext> unbind,
+        double minWidth = 0,
+        bool resizable = true)
+        => AddColumn(gridView, header, width, new DelegateTemplate<TItem>(build, bind, unbind), minWidth, resizable);
+
+    public static GridView AddColumn<TItem>(
+        this GridView gridView,
+        string header,
+        double width,
+        Func<TemplateContext, FrameworkElement> build,
+        Action<FrameworkElement, TItem, int, TemplateContext> bind,
+        Action<FrameworkElement, TItem, int, TemplateContext> unbind,
+        double minWidth,
+        double maxWidth,
+        bool resizable = true)
+        => AddColumn(gridView, header, GridLength.Pixels(width), new DelegateTemplate<TItem>(build, bind, unbind), minWidth, maxWidth, resizable);
+
+    /// <summary>
+    /// Creates a column definition.
+    /// </summary>
+    /// <typeparam name="TItem">Item type.</typeparam>
+    /// <param name="header">Column header text.</param>
+    /// <param name="width">Column width in DIPs.</param>
+    /// <param name="template">Cell template.</param>
+    public static GridViewColumn<TItem> Column<TItem>(
+        string header,
+        double width,
+        IDataTemplate<TItem> template)
+        => new GridViewColumn<TItem> { Header = header ?? string.Empty, Width = width, CellTemplate = template };
+
+    /// <summary>
+    /// Creates an Auto, Star, or Pixel column definition with width constraints.
+    /// </summary>
+    public static GridViewColumn<TItem> Column<TItem>(
+        string header,
+        GridLength width,
+        IDataTemplate<TItem> template,
+        double minWidth = 0,
+        double maxWidth = double.PositiveInfinity,
+        bool resizable = true)
+        => new GridViewColumn<TItem>
+        {
+            Header = header ?? string.Empty,
+            Width = width,
+            MinWidth = minWidth,
+            MaxWidth = maxWidth,
+            IsResizable = resizable,
+            CellTemplate = template,
+        };
+
+    /// <summary>
+    /// Creates a column definition using delegate-based templating.
+    /// </summary>
+    /// <typeparam name="TItem">Item type.</typeparam>
+    /// <param name="header">Column header text.</param>
+    /// <param name="width">Column width in DIPs.</param>
+    /// <param name="build">Template build callback.</param>
+    /// <param name="bind">Template bind callback.</param>
+    /// <param name="unbind">Optional template cleanup callback.</param>
+    public static GridViewColumn<TItem> Column<TItem>(
+        string header,
+        double width,
+        Func<TemplateContext, FrameworkElement> build,
+        Action<FrameworkElement, TItem, int, TemplateContext> bind,
+        Action<FrameworkElement, TItem, int, TemplateContext>? unbind = null)
+        => new GridViewColumn<TItem> { Header = header ?? string.Empty, Width = width, CellTemplate = new DelegateTemplate<TItem>(build, bind, unbind) };
+
+    /// <summary>
+    /// Creates an Auto, Star, or Pixel column definition using delegate-based templating.
+    /// </summary>
+    public static GridViewColumn<TItem> Column<TItem>(
+        string header,
+        GridLength width,
+        Func<TemplateContext, FrameworkElement> build,
+        Action<FrameworkElement, TItem, int, TemplateContext> bind,
+        Action<FrameworkElement, TItem, int, TemplateContext>? unbind = null,
+        double minWidth = 0,
+        double maxWidth = double.PositiveInfinity,
+        bool resizable = true)
+        => new GridViewColumn<TItem>
+        {
+            Header = header ?? string.Empty,
+            Width = width,
+            MinWidth = minWidth,
+            MaxWidth = maxWidth,
+            IsResizable = resizable,
+            CellTemplate = new DelegateTemplate<TItem>(build, bind, unbind),
+        };
+
+    /// <summary>
+    /// Sets the column header text.
+    /// </summary>
+    /// <typeparam name="TItem">Item type.</typeparam>
+    /// <param name="column">Target column.</param>
+    /// <param name="header">Header text.</param>
+    /// <returns>The column for chaining.</returns>
+    public static GridViewColumn<TItem> Header<TItem>(this GridViewColumn<TItem> column, string header)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+        column.Header = header ?? string.Empty;
+        return column;
+    }
+
+    /// <summary>Sets the horizontal alignment of the column header text.</summary>
+    public static GridViewColumn<TItem> HeaderTextAlignment<TItem>(
+        this GridViewColumn<TItem> column,
+        TextAlignment alignment)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+        column.HeaderTextAlignment = alignment;
+        return column;
+    }
+
+    /// <summary>
+    /// Sets the column width.
+    /// </summary>
+    /// <typeparam name="TItem">Item type.</typeparam>
+    /// <param name="column">Target column.</param>
+    /// <param name="width">Width in DIPs.</param>
+    /// <returns>The column for chaining.</returns>
+    public static GridViewColumn<TItem> Width<TItem>(this GridViewColumn<TItem> column, double width)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+        column.Width = GridLength.Pixels(width);
+        return column;
+    }
+
+    /// <summary>
+    /// Sets an Auto, Star, or Pixel width together with its constraints.
+    /// </summary>
+    public static GridViewColumn<TItem> Width<TItem>(
+        this GridViewColumn<TItem> column,
+        GridLength width,
+        double minWidth = 0,
+        double maxWidth = double.PositiveInfinity)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+        column.Width = width;
+        column.MinWidth = minWidth;
+        column.MaxWidth = maxWidth;
+        return column;
+    }
+
+    /// <summary>
+    /// Sets a fixed pixel width together with its constraints.
+    /// </summary>
+    public static GridViewColumn<TItem> Width<TItem>(
+        this GridViewColumn<TItem> column,
+        double width,
+        double minWidth,
+        double maxWidth)
+        => column.Width(GridLength.Pixels(width), minWidth, maxWidth);
+
+    public static GridViewColumn<TItem> PixelWidth<TItem>(
+        this GridViewColumn<TItem> column,
+        double width,
+        double minWidth = 0,
+        double maxWidth = double.PositiveInfinity)
+        => column.Width(GridLength.Pixels(width), minWidth, maxWidth);
+
+    public static GridViewColumn<TItem> AutoWidth<TItem>(
+        this GridViewColumn<TItem> column,
+        double minWidth = 0,
+        double maxWidth = double.PositiveInfinity)
+        => column.Width(GridLength.Auto, minWidth, maxWidth);
+
+    public static GridViewColumn<TItem> StarWidth<TItem>(
+        this GridViewColumn<TItem> column,
+        double weight = 1,
+        double minWidth = 0,
+        double maxWidth = double.PositiveInfinity)
+        => column.Width(GridLength.Stars(weight), minWidth, maxWidth);
+
+    /// <summary>
+    /// Sets the column minimum width.
+    /// </summary>
+    /// <typeparam name="TItem">Item type.</typeparam>
+    /// <param name="column">Target column.</param>
+    /// <param name="minWidth">Minimum width in DIPs.</param>
+    /// <returns>The column for chaining.</returns>
+    public static GridViewColumn<TItem> MinWidth<TItem>(this GridViewColumn<TItem> column, double minWidth)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+        column.MinWidth = minWidth;
+        return column;
+    }
+
+    /// <summary>
+    /// Sets the column maximum width.
+    /// </summary>
+    public static GridViewColumn<TItem> MaxWidth<TItem>(this GridViewColumn<TItem> column, double maxWidth)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+        column.MaxWidth = maxWidth;
+        return column;
+    }
+
+    /// <summary>
+    /// Sets whether the column is resizable.
+    /// </summary>
+    /// <typeparam name="TItem">Item type.</typeparam>
+    /// <param name="column">Target column.</param>
+    /// <param name="resizable">Whether the column can be resized.</param>
+    /// <returns>The column for chaining.</returns>
+    public static GridViewColumn<TItem> Resizable<TItem>(this GridViewColumn<TItem> column, bool resizable = true)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+        column.IsResizable = resizable;
+        return column;
+    }
+
+    /// <summary>
+    /// Sets whether the column can be resized.
+    /// </summary>
+    /// <typeparam name="TItem">Item type.</typeparam>
+    /// <param name="column">Target column.</param>
+    /// <param name="value">Whether the column can be resized.</param>
+    /// <returns>The column for chaining.</returns>
+    public static GridViewColumn<TItem> IsResizable<TItem>(
+        this GridViewColumn<TItem> column,
+        bool value = true)
+        => column.Resizable(value);
+
+    /// <summary>Enables sorting by a key selected from each row item.</summary>
+    public static GridViewColumn<TItem> SortBy<TItem, TKey>(
+        this GridViewColumn<TItem> column,
+        Func<TItem, TKey> keySelector,
+        IComparer<TKey>? comparer = null)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+        ArgumentNullException.ThrowIfNull(keySelector);
+        comparer ??= Comparer<TKey>.Default;
+        column.SortComparer = Comparer<TItem>.Create(
+            (left, right) => comparer.Compare(keySelector(left), keySelector(right)));
+        return column;
+    }
+
+    /// <summary>Enables sorting with a comparer over complete row items.</summary>
+    public static GridViewColumn<TItem> SortWith<TItem>(
+        this GridViewColumn<TItem> column,
+        IComparer<TItem> comparer)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+        ArgumentNullException.ThrowIfNull(comparer);
+        column.SortComparer = comparer;
+        return column;
+    }
+
+    /// <summary>
+    /// Sets the column cell template.
+    /// </summary>
+    /// <typeparam name="TItem">Item type.</typeparam>
+    /// <param name="column">Target column.</param>
+    /// <param name="template">Cell template.</param>
+    /// <returns>The column for chaining.</returns>
+    public static GridViewColumn<TItem> CellTemplate<TItem>(
+        this GridViewColumn<TItem> column,
+        IDataTemplate<TItem>? template)
+    {
+        column.CellTemplate = template;
+        return column;
+    }
+
+    /// <summary>
+    /// Sets the column cell template.
+    /// </summary>
+    /// <typeparam name="TItem">Item type.</typeparam>
+    /// <param name="column">Target column.</param>
+    /// <param name="template">Cell template.</param>
+    /// <returns>The column for chaining.</returns>
+    public static GridViewColumn<TItem> Bind<TItem>(
+        this GridViewColumn<TItem> column,
+        IDataTemplate<TItem> template)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+        ArgumentNullException.ThrowIfNull(template);
+
+        column.CellTemplate = template;
+        return column;
+    }
+
+    /// <summary>
+    /// Sets the cell template. Alias for <see cref="Bind{TItem}(GridViewColumn{TItem}, IDataTemplate{TItem})"/>.
+    /// </summary>
+    /// <typeparam name="TItem">Item type.</typeparam>
+    /// <param name="column">Target column.</param>
+    /// <param name="template">Cell template.</param>
+    /// <returns>The column for chaining.</returns>
+    public static GridViewColumn<TItem> Template<TItem>(
+        this GridViewColumn<TItem> column,
+        IDataTemplate<TItem> template)
+        => Bind(column, template);
+
+    /// <summary>
+    /// Sets the cell template using delegate-based templating.
+    /// </summary>
+    /// <typeparam name="TItem">Item type.</typeparam>
+    /// <typeparam name="TElement">Template root element type.</typeparam>
+    /// <param name="column">Target column.</param>
+    /// <param name="build">Template build callback.</param>
+    /// <param name="bind">Template bind callback.</param>
+    /// <param name="unbind">Optional template cleanup callback.</param>
+    /// <returns>The column for chaining.</returns>
+    public static GridViewColumn<TItem> Bind<TItem, TElement>(
+        this GridViewColumn<TItem> column,
+        Func<TemplateContext, TElement> build,
+        Action<TElement, TItem, int, TemplateContext> bind,
+        Action<TElement, TItem, int, TemplateContext>? unbind = null) where TElement : FrameworkElement
+        => Bind(
+            column,
+            new DelegateTemplate<TItem>(
+                build,
+                (view, item, index, context) => bind((TElement)view, item, index, context),
+                unbind == null
+                    ? null
+                    : (view, item, index, context) => unbind((TElement)view, item, index, context)));
+
+    /// <summary>
+    /// Sets the cell template using delegate-based templating with a simple bind callback.
+    /// </summary>
+    /// <typeparam name="TItem">Item type.</typeparam>
+    /// <typeparam name="TElement">Template root element type.</typeparam>
+    /// <param name="column">Target column.</param>
+    /// <param name="build">Template build callback.</param>
+    /// <param name="bind">Template bind callback.</param>
+    /// <returns>The column for chaining.</returns>
+    public static GridViewColumn<TItem> Bind<TItem, TElement>(
+        this GridViewColumn<TItem> column,
+        Func<TemplateContext, TElement> build,
+        Action<TElement, TItem> bind) where TElement : FrameworkElement
+        => Bind(column, new DelegateTemplate<TItem>(build, (view, item, index, ctx) => bind((TElement)view, item)));
+
+    /// <summary>
+    /// Sets the cell template using delegate-based templating.
+    /// </summary>
+    /// <typeparam name="TItem">Item type.</typeparam>
+    /// <typeparam name="TElement">Template root element type.</typeparam>
+    /// <param name="column">Target column.</param>
+    /// <param name="build">Template build callback.</param>
+    /// <param name="bind">Template bind callback.</param>
+    /// <param name="unbind">Optional template cleanup callback.</param>
+    /// <returns>The column for chaining.</returns>
+    public static GridViewColumn<TItem> Template<TItem, TElement>(
+        this GridViewColumn<TItem> column,
+        Func<TemplateContext, TElement> build,
+        Action<TElement, TItem, int, TemplateContext> bind,
+        Action<TElement, TItem, int, TemplateContext>? unbind = null) where TElement : FrameworkElement
+        => Bind(column, build, bind, unbind);
+
+    /// <summary>
+    /// Sets the cell template using delegate-based templating with a simple bind callback. Alias for <see cref="Bind{TItem, TElement}(GridViewColumn{TItem}, Func{TemplateContext, TElement}, Action{TElement, TItem})"/>.
+    /// </summary>
+    /// <typeparam name="TItem">Item type.</typeparam>
+    /// <typeparam name="TElement">Template root element type.</typeparam>
+    /// <param name="column">Target column.</param>
+    /// <param name="build">Template build callback.</param>
+    /// <param name="bind">Template bind callback.</param>
+    /// <returns>The column for chaining.</returns>
+    public static GridViewColumn<TItem> Template<TItem, TElement>(
+        this GridViewColumn<TItem> column,
+        Func<TemplateContext, TElement> build,
+        Action<TElement, TItem> bind) where TElement : FrameworkElement
+        => Bind(column, build, bind);
+
+    /// <summary>
+    /// Sets a text-based cell template that displays the result of <paramref name="textSelector"/>.
+    /// </summary>
+    /// <typeparam name="TItem">Item type.</typeparam>
+    /// <param name="column">Target column.</param>
+    /// <param name="textSelector">Function that extracts display text from the item.</param>
+    /// <returns>The column for chaining.</returns>
+    public static GridViewColumn<TItem> Text<TItem>(
+        this GridViewColumn<TItem> column,
+        Func<TItem, string> textSelector)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+        ArgumentNullException.ThrowIfNull(textSelector);
+
+        return Template(
+            column,
+            build: _ => new TextBlock().CenterVertical(),
+            bind: (TextBlock tb, TItem item) => tb.Text = textSelector(item) ?? string.Empty);
+    }
+}

@@ -1,0 +1,287 @@
+using Aprillz.MewUI.Rendering;
+
+namespace Aprillz.MewUI.Controls;
+
+/// <summary>
+/// A slider control for selecting a numeric value within a range.
+/// </summary>
+public sealed partial class Slider : RangeBase
+{
+    private static readonly bool _defaultStyleRegistered =
+        DefaultStyles.Register<Slider>(DefaultStyles.CreateSliderStyle);
+
+    private bool _isDragging;
+
+    public static readonly MewProperty<Color> ThumbBrushProperty =
+        MewProperty<Color>.Register<Slider>(nameof(ThumbBrush), default, MewPropertyOptions.AffectsRender);
+
+    public static readonly MewProperty<Color> ThumbBorderBrushProperty =
+        MewProperty<Color>.Register<Slider>(nameof(ThumbBorderBrush), default, MewPropertyOptions.AffectsRender);
+
+    public static readonly MewProperty<bool> ChangeOnWheelProperty =
+        MewProperty<bool>.Register<Slider>(nameof(ChangeOnWheel), true, MewPropertyOptions.None);
+
+    static Slider()
+    {
+        MaximumProperty.OverrideDefaultValue<Slider>(100.0);
+        HeightProperty.OverrideDefaultValue<Slider>(24.0);
+        SmallChangeProperty.OverrideDefaultValue<Slider>(1.0);
+        LargeChangeProperty.OverrideDefaultValue<Slider>(10.0);
+        FocusableProperty.OverrideDefaultValue<Slider>(true);
+    }
+
+    public bool ChangeOnWheel
+    {
+        get => GetValue(ChangeOnWheelProperty);
+        set => SetValue(ChangeOnWheelProperty, value);
+    }
+
+    public Color ThumbBrush
+    {
+        get => GetValue(ThumbBrushProperty);
+        set => SetValue(ThumbBrushProperty, value);
+    }
+
+    public Color ThumbBorderBrush
+    {
+        get => GetValue(ThumbBorderBrushProperty);
+        set => SetValue(ThumbBorderBrushProperty, value);
+    }
+
+    private double ThumbSize => 14;
+
+    protected override Size MeasureContent(Size availableSize) => new Size(ThumbSize * 3, ThumbSize);
+
+    protected override void OnRender(IGraphicsContext context)
+    {
+        var bounds = Bounds;
+        var contentBounds = bounds.Deflate(Padding);
+        var state = CurrentVisualState;
+
+        // Track, inset half a thumb on both sides so the thumb at either extreme stays inside
+        // the control bounds; ink past them is cut by any caching or clipping ancestor.
+        double trackHeight = 4;
+        double trackY = contentBounds.Y + (contentBounds.Height - trackHeight) / 2;
+        var trackRect = new Rect(
+            contentBounds.X + ThumbSize / 2,
+            trackY,
+            Math.Max(0, contentBounds.Width - ThumbSize),
+            trackHeight);
+
+        var trackBg = Background;
+
+        context.FillRoundedRectangle(trackRect, 2, 2, trackBg);
+
+        if (Theme.Metrics.ControlBorderThickness > 0)
+        {
+            var trackBorder = BorderBrush;
+            context.DrawRoundedRectangle(trackRect, 2, 2, trackBorder, Theme.Metrics.ControlBorderThickness, strokeInset: true);
+        }
+
+        // Filled track
+        double t = GetNormalizedValue();
+        var fillRect = new Rect(trackRect.X, trackRect.Y, trackRect.Width * t, trackRect.Height);
+        if (fillRect.Width > 0)
+        {
+            var fillColor = state.IsEnabled ? Theme.Palette.Accent : Theme.Palette.DisabledAccent;
+            context.FillRoundedRectangle(fillRect, 2, 2, fillColor);
+        }
+
+        // Thumb
+        double thumbX = trackRect.X + trackRect.Width * t - ThumbSize / 2;
+        thumbX = Math.Clamp(thumbX, contentBounds.X, Math.Max(contentBounds.X, contentBounds.Right - ThumbSize));
+
+        double thumbY = contentBounds.Y + (contentBounds.Height - ThumbSize) / 2;
+        var thumbRect = new Rect(thumbX, thumbY, ThumbSize, ThumbSize);
+
+        var thumbFill = ThumbBrush;
+
+        context.FillEllipse(thumbRect.Deflate(BorderThickness / 2.0), thumbFill);
+        var thumbBorder = ThumbBorderBrush;
+
+        if (BorderThickness > 0)
+        {
+            context.DrawEllipse(thumbRect, thumbBorder, BorderThickness, strokeInset: true);
+        }
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+
+        if (!IsEffectivelyEnabled || e.Button != MouseButton.Left)
+        {
+            return;
+        }
+
+        Focus();
+        _isDragging = true;
+        SetPressed(true);
+        SetValueFromPosition(e.Position.X);
+
+        var root = FindVisualRoot();
+        if (root is Window window)
+        {
+            window.CaptureMouse(this);
+        }
+
+        e.Handled = true;
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+
+        if (!IsEffectivelyEnabled || !_isDragging || !IsMouseCaptured || !e.LeftButton)
+        {
+            return;
+        }
+
+        SetValueFromPosition(e.Position.X);
+        e.Handled = true;
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+
+        if (e.Button != MouseButton.Left || !_isDragging)
+        {
+            return;
+        }
+
+        _isDragging = false;
+        SetPressed(false);
+
+        var root = FindVisualRoot();
+        if (root is Window window)
+        {
+            window.ReleaseMouseCapture();
+        }
+
+        e.Handled = true;
+    }
+
+    protected override void OnMouseWheel(MouseWheelEventArgs e)
+    {
+        base.OnMouseWheel(e);
+        if (!IsEffectivelyEnabled || !ChangeOnWheel || e.Delta.Y == 0)
+        {
+            return;
+        }
+
+        SetValueInternal(Value + e.Delta.Y, true);
+        e.Handled = true;
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+
+        if (e.Handled || !IsEffectivelyEnabled)
+        {
+            return;
+        }
+
+        double step = GetKeyboardSmallStep();
+        double largeStep = GetKeyboardLargeStep(step);
+
+        if (e.Key is Key.Left or Key.Down)
+        {
+            SetValueInternal(Value - step, true);
+            e.Handled = true;
+        }
+        else if (e.Key is Key.Right or Key.Up)
+        {
+            SetValueInternal(Value + step, true);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.PageDown)
+        {
+            SetValueInternal(Value - largeStep, true);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.PageUp)
+        {
+            SetValueInternal(Value + largeStep, true);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Home)
+        {
+            SetValueInternal(Minimum, true);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.End)
+        {
+            SetValueInternal(Maximum, true);
+            e.Handled = true;
+        }
+    }
+
+    private double GetKeyboardSmallStep()
+    {
+        if (SmallChange > 0 && !double.IsNaN(SmallChange) && !double.IsInfinity(SmallChange))
+        {
+            return SmallChange;
+        }
+
+        double range = Math.Abs(Maximum - Minimum);
+        if (range > 0)
+        {
+            return range / 100.0;
+        }
+
+        return 1;
+    }
+
+    private double GetKeyboardLargeStep(double smallStep)
+    {
+        double range = Math.Abs(Maximum - Minimum);
+        if (range > 0)
+        {
+            return Math.Max(smallStep * 10, range / 10.0);
+        }
+
+        return smallStep * 10;
+    }
+
+    private void SetValueFromPosition(double x)
+    {
+        // Mirrors the render-side track inset so a click lands on the value under the pointer.
+        var contentBounds = Bounds.Deflate(Padding);
+        double left = contentBounds.X + ThumbSize / 2;
+        double width = Math.Max(1e-6, contentBounds.Width - ThumbSize);
+        double t = Math.Clamp((x - left) / width, 0, 1);
+        double range = Maximum - Minimum;
+        double value = range <= 0 ? Minimum : Minimum + t * range;
+        SetValueInternal(value, true);
+    }
+
+    private void SetValueInternal(double value, bool fromInput)
+    {
+        double clamped = ClampToRange(value);
+        if (Value.Equals(clamped))
+        {
+            return;
+        }
+
+        if (fromInput)
+            CommitValue(clamped);
+        else
+            Value = clamped;
+    }
+
+    protected override void OnDispose()
+    {
+        base.OnDispose();
+    }
+
+    protected override void OnMouseLeave()
+    {
+        base.OnMouseLeave();
+        if (!_isDragging)
+        {
+            SetPressed(false);
+        }
+    }
+}

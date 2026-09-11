@@ -1,6 +1,11 @@
 namespace TangdouDownloader.Core;
 
-public sealed record VideoInfo(string Vid, string Title, IReadOnlyDictionary<string, string> Urls, string? CoverUrl = null)
+public sealed record VideoInfo(
+    string Vid,
+    string Title,
+    IReadOnlyDictionary<string, string> Urls,
+    string? CoverUrl = null,
+    IReadOnlyDictionary<string, long>? Sizes = null)
 {
     public string SelectUrl(string quality)
     {
@@ -16,6 +21,23 @@ public sealed record VideoInfo(string Vid, string Title, IReadOnlyDictionary<str
         foreach (var key in new[] { "H1080P", "V1080P", "H720P", "V720P", "H540P", "V540P", "H360P", "V360P" })
             if (Urls.TryGetValue(key, out selected)) return selected;
         return Urls.Values.FirstOrDefault() ?? string.Empty;
+    }
+
+    public long SelectSize(string quality)
+    {
+        if (Sizes is not { } sizes) return -1;
+        var preferred = quality switch
+        {
+            "1080P" or "最高" => "H1080P",
+            "720P" or "中等" => "H720P",
+            "540P" => "H540P",
+            "360P" or "最低" => "H360P",
+            _ => "H1080P"
+        };
+        if (sizes.TryGetValue(preferred, out var selected)) return selected;
+        foreach (var key in new[] { "H1080P", "V1080P", "H720P", "V720P", "H540P", "V540P", "H360P", "V360P" })
+            if (sizes.TryGetValue(key, out selected)) return selected;
+        return sizes.Values.FirstOrDefault(value => value > 0);
     }
 }
 

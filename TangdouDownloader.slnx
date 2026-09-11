@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="TangdouDownloader.Core/TangdouDownloader.Core.csproj" />
   <Project Path="TangdouDownloader.Desktop/TangdouDownloader.Desktop.csproj" />
+  <Project Path="TangdouDownloader.MewUI/TangdouDownloader.MewUI.csproj" />
 </Solution>

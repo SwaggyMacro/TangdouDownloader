@@ -1,0 +1,248 @@
+using Aprillz.MewUI.Rendering;
+
+namespace Aprillz.MewUI.Controls;
+
+/// <summary>
+/// Base class for layout panels that contain multiple children.
+/// </summary>
+public abstract class Panel : FrameworkElement
+    , IVisualTreeHost
+    , ILogicalTreeHost
+{
+    private readonly List<Element> _children = new();
+
+    public static readonly MewProperty<Thickness> PaddingProperty =
+        MewProperty<Thickness>.Register<Panel>(nameof(Padding), default, MewPropertyOptions.AffectsLayout);
+
+    public static readonly MewProperty<bool> ClipToBoundsProperty =
+        MewProperty<bool>.Register<Panel>(nameof(ClipToBounds), false, MewPropertyOptions.AffectsRender);
+
+    /// <summary>
+    /// Gets or sets the inner padding.
+    /// </summary>
+    public Thickness Padding
+    {
+        get => GetValue(PaddingProperty);
+        set => SetValue(PaddingProperty, value);
+    }
+
+    public bool ClipToBounds
+    {
+        get => GetValue(ClipToBoundsProperty);
+        set => SetValue(ClipToBoundsProperty, value);
+    }
+
+    /// <summary>
+    /// Gets the collection of child elements.
+    /// </summary>
+    public IReadOnlyList<Element> Children => _children;
+
+    /// <summary>
+    /// Gets the underlying list directly for allocation-free enumeration in subclasses.
+    /// </summary>
+    protected List<Element> ChildrenList => _children;
+
+    /// <summary>
+    /// Adds a child element to the panel.
+    /// </summary>
+    public void Add(Element child)
+    {
+        ArgumentNullException.ThrowIfNull(child);
+
+        // Reject self/cycles up front; a child owned elsewhere is transferred (the previous
+        // owner clears its record), matching the visual tree's fluid reparenting.
+        ValidateLogicalChild(child, allowTransfer: true);
+        child.DetachFromCurrentLogicalOwner();
+
+        child.Parent = this;
+        _children.Add(child);
+        AttachLogicalChild(child);
+        OnChildAdded(child);
+        InvalidateMeasure();
+    }
+
+    /// <summary>
+    /// Adds multiple children to the panel.
+    /// </summary>
+    public void AddRange(params Element[] children)
+    {
+        foreach (var child in children)
+        {
+            Add(child);
+        }
+    }
+
+    /// <summary>
+    /// Removes a child element from the panel.
+    /// </summary>
+    public bool Remove(Element child)
+    {
+        if (_children.Remove(child))
+        {
+            DetachLogicalChild(child);
+            child.Parent = null;
+            OnChildRemoved(child);
+            InvalidateMeasure();
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Removes all children from the panel.
+    /// </summary>
+    public void Clear()
+    {
+        // Snapshot before notifying: an OnChildRemoved override that mutates this panel (e.g. re-adds
+        // a child) would otherwise corrupt the live _children list mid-foreach, same as Remove().
+        var removed = CollectionPool<List<Element>>.Rent();
+        removed.AddRange(_children);
+        _children.Clear();
+
+        foreach (var child in removed)
+        {
+            DetachLogicalChild(child);
+            child.Parent = null;
+            OnChildRemoved(child);
+        }
+
+        CollectionPool.Return(removed);
+        InvalidateMeasure();
+    }
+
+    /// <summary>
+    /// Gets the child at the specified index.
+    /// </summary>
+    public Element this[int index] => _children[index];
+
+    /// <summary>
+    /// Gets the number of children.
+    /// </summary>
+    public int Count => _children.Count;
+
+    /// <summary>
+    /// Inserts a child at the specified index.
+    /// </summary>
+    public void Insert(int index, Element child)
+    {
+        ArgumentNullException.ThrowIfNull(child);
+
+        ValidateLogicalChild(child, allowTransfer: true);
+        child.DetachFromCurrentLogicalOwner();
+
+        child.Parent = this;
+        _children.Insert(index, child);
+        AttachLogicalChild(child);
+        OnChildAdded(child);
+        InvalidateMeasure();
+    }
+
+    /// <summary>
+    /// Removes the child at the specified index.
+    /// </summary>
+    public void RemoveAt(int index)
+    {
+        var child = _children[index];
+        _children.RemoveAt(index);
+        DetachLogicalChild(child);
+        child.Parent = null;
+        OnChildRemoved(child);
+        InvalidateMeasure();
+    }
+
+    /// <summary>
+    /// Called when a child is added.
+    /// </summary>
+    protected virtual void OnChildAdded(Element child) { }
+
+    protected override void OnLogicalChildTaken(Element child)
+    {
+        base.OnLogicalChildTaken(child);
+
+        // Another host adopted the child: drop it from this panel so no stale entry
+        // keeps it measured/visited by two parents.
+        if (_children.Remove(child))
+        {
+            DetachLogicalChild(child);
+            OnChildRemoved(child);
+            InvalidateMeasure();
+        }
+    }
+
+    /// <summary>
+    /// Called when a child is removed.
+    /// </summary>
+    protected virtual void OnChildRemoved(Element child) { }
+
+    protected override void RenderSubtree(IGraphicsContext context)
+    {
+        if (ClipToBounds)
+        {
+            context.Save();
+            context.SetClip(Bounds);
+        }
+        try
+        {
+            foreach (var child in _children)
+            {
+                child.Render(context);
+            }
+        }
+        finally
+        {
+            if (ClipToBounds)
+            {
+                context.Restore();
+            }
+        }
+    }
+
+    protected override UIElement? OnHitTest(Point point)
+    {
+        // Subtree cull. Children are arranged within this panel's layout slot, so a point
+        // outside Bounds can hit neither us nor any child.
+        if (!Bounds.Contains(point))
+        {
+            return null;
+        }
+
+        if (!IsVisible || !IsHitTestVisible || !IsEffectivelyEnabled)
+        {
+            return null;
+        }
+
+        // Hit test children in reverse order (top to bottom in visual order)
+        for (int i = _children.Count - 1; i >= 0; i--)
+        {
+            if (_children[i] is UIElement uiChild)
+            {
+                var result = uiChild.HitTest(point);
+                if (result != null)
+                {
+                    return result;
+                }
+            }
+        }
+
+        // Self-hit (point is in Bounds - verified above).
+        return this;
+    }
+
+    bool IVisualTreeHost.VisitChildren(Func<Element, bool> visitor)
+    {
+        for (int i = 0; i < _children.Count; i++)
+        {
+            if (!visitor(_children[i])) return false;
+        }
+        return true;
+    }
+
+    bool ILogicalTreeHost.VisitLogicalChildren(Func<Element, bool> visitor)
+    {
+        for (int i = 0; i < _children.Count; i++)
+        {
+            if (!visitor(_children[i])) return false;
+        }
+        return true;
+    }
+}

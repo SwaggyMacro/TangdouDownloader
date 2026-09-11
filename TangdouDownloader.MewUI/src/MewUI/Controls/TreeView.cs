@@ -1,0 +1,1514 @@
+using Aprillz.MewUI.Input;
+using Aprillz.MewUI.Rendering;
+using Aprillz.MewUI.Text;
+
+namespace Aprillz.MewUI.Controls;
+
+/// <summary>
+/// A hierarchical tree view control with expand/collapse functionality.
+/// </summary>
+public sealed partial class TreeView : Control, ISubtreeInvalidationHost, IFocusIntoViewHost, IVirtualizedTabNavigationHost, ISelector, IMultiSelector
+{
+    private static readonly bool _defaultStyleRegistered =
+        DefaultStyles.Register<TreeView>(DefaultStyles.CreateTreeViewStyle);
+
+    private readonly FixedHeightItemsPresenter _presenter;
+    private readonly ScrollViewer _scrollViewer;
+    private uint _itemBindingGeneration;
+    private ITreeItemsView _itemsSource = TreeItemsView.Empty;
+    // The application's template; the presenter holds it wrapped in a row container while a hook is registered.
+    private IDataTemplate _itemTemplate;
+    private PrepareContainerHandler<ItemContainer, object?>? _prepareContainer;
+    private PrepareContainerHandler<ItemContainer, object?>? _clearContainer;
+    // Row a finger pressed, held until the release decides between a tap and a scroll.
+    private int _touchPressIndex = -1;
+    private bool _touchPressOnGlyph;
+    private TreeViewNode? _selectedNode;
+    private object? _selectedItem;
+    private bool _syncingSelection;
+    private int _hoverVisibleIndex = -1;
+    private bool _hasLastMousePosition;
+    private Point _lastMousePosition;
+    private ScrollIntoViewRequest _scrollIntoViewRequest;
+    private readonly PendingTabFocusHelper _tabFocusHelper;
+    private double _observedExtentWidth;
+    // Observed widths are DIP values that never shrink, so they must not outlive their scale.
+    private uint _observedExtentDpi;
+
+    /// <summary>
+    /// Gets or sets the root nodes collection.
+    /// </summary>
+    public ITreeItemsView ItemsSource
+    {
+        get => _itemsSource;
+        set
+        {
+            value ??= TreeItemsView.Empty;
+            if (ReferenceEquals(_itemsSource, value))
+            {
+                return;
+            }
+
+            _itemsSource.Changed -= OnItemsChanged;
+            _itemsSource.SelectionChanged -= OnItemsSelectionChanged;
+            if (_itemsSource is IMultiSelectableItemsView oldMulti)
+            {
+                oldMulti.SelectedIndicesChanged -= OnItemsSelectedIndicesChanged;
+            }
+
+            _itemsSource = value;
+            _itemsSource.Changed += OnItemsChanged;
+            _itemsSource.SelectionChanged += OnItemsSelectionChanged;
+            if (_itemsSource is IMultiSelectableItemsView newMulti)
+            {
+                newMulti.SelectedIndicesChanged += OnItemsSelectedIndicesChanged;
+            }
+
+            // The selection mode is a control-level setting; re-apply it so it survives a source swap.
+            _itemsSource.SetSelectionMode(SelectionMode);
+
+            // The old source's selection no longer applies; re-sync from the new source
+            // rather than leaving stale references to the previous source's item/node.
+            _selectedNode = _itemsSource.SelectedItem as TreeViewNode;
+            _selectedItem = _itemsSource.SelectedItem;
+            SyncSelectionProperties(commit: false);
+
+            _presenter.ItemsSource = _itemsSource;
+            _presenter.RecycleAll();
+            InvalidateItemBindings();
+        }
+    }
+
+    private IMultiSelectableItemsView? MultiView => _itemsSource.AsMultiSelectable();
+
+    /// <summary>
+    /// Gets or sets the selection mode. Requires a multi-selection-capable items source
+    /// (e.g. <see cref="TreeItemsView{T}"/>); otherwise stays <see cref="ItemsSelectionMode.Single"/>.
+    /// Range selection follows the flattened visible-row order. Parent/child propagation is not applied.
+    /// </summary>
+    public static readonly MewProperty<ItemsSelectionMode> SelectionModeProperty =
+        MewProperty<ItemsSelectionMode>.Register<TreeView>(nameof(SelectionMode), ItemsSelectionMode.Single,
+            MewPropertyOptions.None,
+            static (self, _, newVal) => self.OnSelectionModePropertyChanged(newVal));
+
+    public ItemsSelectionMode SelectionMode
+    {
+        get => GetValue(SelectionModeProperty);
+        set => SetValue(SelectionModeProperty, value);
+    }
+
+    private void OnSelectionModePropertyChanged(ItemsSelectionMode mode)
+        => _itemsSource.SetSelectionMode(mode);
+
+    /// <summary>Gets the selected visible-row indices in ascending order.</summary>
+    public IReadOnlyList<int> SelectedIndices => _itemsSource.GetSelectedIndices();
+
+    /// <summary>Gets the selected items in ascending visible-row order (read-only, bindable).</summary>
+    public IReadOnlyList<object?> SelectedItems => GetValue(SelectedItemsProperty);
+
+    /// <summary>Selects every visible item (multi-selection modes only; no-op otherwise).</summary>
+    public void SelectAll()
+    {
+        var multi = _itemsSource.AsMultiSelectable();
+        if (multi != null && multi.SelectionMode != ItemsSelectionMode.Single && _itemsSource.Count > 0)
+            multi.SelectRange(0, _itemsSource.Count - 1, clearExisting: true);
+    }
+
+    /// <summary>Clears the entire selection.</summary>
+    public void ClearSelection()
+    {
+        var multi = _itemsSource.AsMultiSelectable();
+        if (multi != null)
+            multi.ClearSelection();
+        else
+            _itemsSource.SelectedIndex = -1;
+    }
+
+    /// <summary>Selects the inclusive visible-row range [start, end], replacing the selection (multi only).</summary>
+    public void SelectRange(int start, int end)
+    {
+        _itemsSource.AsMultiSelectable()?.SelectRange(start, end, clearExisting: true);
+    }
+
+    /// <summary>Occurs when the set of selected rows changes (multi-select).</summary>
+    public event Action? SelectedIndicesChanged;
+
+    /// <summary>Returns whether the item at the given visible-row <paramref name="index"/> is selected.</summary>
+    public bool IsSelected(int index) => _itemsSource.IsItemSelected(index);
+
+    private void ApplyKeyboardSelect(int target, ModifierKeys modifiers)
+    {
+        var multi = MultiView;
+        if (multi != null && multi.SelectionMode != ItemsSelectionMode.Single)
+        {
+            ItemsSelectionInput.HandleKeyboardMove(multi, target, (modifiers & ModifierKeys.Shift) != 0);
+        }
+        else
+        {
+            _itemsSource.SelectedIndex = target;
+        }
+    }
+
+    private void OnItemsSelectedIndicesChanged()
+    {
+        RefreshSelectedItems();
+        SelectedIndicesChanged?.Invoke();
+        RefreshContainerSelection();
+        InvalidateVisual();
+    }
+
+    public static readonly MewProperty<TreeViewNode?> SelectedNodeProperty =
+        MewProperty<TreeViewNode?>.Register<TreeView>(nameof(SelectedNode), null,
+            MewPropertyOptions.BindsTwoWayByDefault,
+            static (self, _, newVal) => self.OnSelectedNodePropertyChanged(newVal));
+
+    public static readonly MewProperty<object?> SelectedItemProperty =
+        MewProperty<object?>.Register<TreeView>(nameof(SelectedItem), null,
+            MewPropertyOptions.BindsTwoWayByDefault,
+            static (self, _, newVal) => self.OnSelectedItemPropertyChanged(newVal));
+
+    private static readonly MewPropertyKey<IReadOnlyList<object?>> SelectedItemsPropertyKey =
+        MewProperty<IReadOnlyList<object?>>.RegisterReadOnly<TreeView>(nameof(SelectedItems), Array.Empty<object?>());
+    public static readonly MewProperty<IReadOnlyList<object?>> SelectedItemsProperty = SelectedItemsPropertyKey.Property;
+
+    /// <summary>
+    /// Gets or sets the currently selected tree node.
+    /// </summary>
+    public TreeViewNode? SelectedNode
+    {
+        get => GetValue(SelectedNodeProperty);
+        set => SetValue(SelectedNodeProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the selected item as an object for consistency with selector-style controls.
+    /// When using <see cref="TreeViewNode"/>-based items, this is equivalent to <see cref="SelectedNode"/>.
+    /// When using <see cref="TreeItemsView{T}"/>, this returns the actual typed item.
+    /// </summary>
+    public object? SelectedItem
+    {
+        get => GetValue(SelectedItemProperty);
+        set => SetValue(SelectedItemProperty, value);
+    }
+
+    private void OnSelectedNodePropertyChanged(TreeViewNode? node)
+    {
+        if (_syncingSelection) return;
+        _syncingSelection = true;
+        try { SetSelectedNodeCore(node); }
+        finally { _syncingSelection = false; }
+        SyncSelectionProperties(commit: false);
+    }
+
+    private void OnSelectedItemPropertyChanged(object? item)
+    {
+        if (_syncingSelection) return;
+        _syncingSelection = true;
+        try
+        {
+            if (item is TreeViewNode node)
+                SetSelectedNodeCore(node);
+            else
+                _itemsSource.SelectedItem = item;
+        }
+        finally { _syncingSelection = false; }
+        SyncSelectionProperties(commit: false);
+    }
+
+    // Mirrors the model selection (_selectedNode/_selectedItem) into the bindable properties.
+    // Guarded so the property change callbacks do not re-enter the model.
+    private void SyncSelectionProperties(bool commit)
+    {
+        bool wasSyncing = _syncingSelection;
+        _syncingSelection = true;
+        try
+        {
+            if (!commit)
+            {
+                SetCurrentValue(SelectedNodeProperty, _selectedNode);
+                SetCurrentValue(SelectedItemProperty, _selectedItem ?? _selectedNode);
+            }
+            else
+            {
+                CommitTargetValue(SelectedNodeProperty, _selectedNode);
+                CommitTargetValue(SelectedItemProperty, _selectedItem ?? _selectedNode);
+            }
+        }
+        finally { _syncingSelection = wasSyncing; }
+        RefreshSelectedItems();
+    }
+
+    // Materializes the current selection into the read-only SelectedItems projection.
+    private void RefreshSelectedItems()
+    {
+        var indices = SelectedIndices;
+        if (indices.Count == 0)
+        {
+            SetValue(SelectedItemsPropertyKey, Array.Empty<object?>());
+            return;
+        }
+        // Skip indices that are transiently out of range mid collection-change (see SelectionSync).
+        int count = _itemsSource.Count;
+        var items = new List<object?>(indices.Count);
+        foreach (int index in indices)
+        {
+            if ((uint)index < (uint)count)
+                items.Add(_itemsSource.GetItem(index));
+        }
+        SetValue(SelectedItemsPropertyKey, items);
+    }
+
+    /// <summary>
+    /// Occurs when the selected item changes.
+    /// </summary>
+    public event Action<object?>? SelectionChanged;
+
+    /// <summary>
+    /// Occurs when the selected node changes.
+    /// </summary>
+    public event Action<TreeViewNode?>? SelectedNodeChanged;
+
+    /// <summary>
+    /// Occurs immediately before an item is expanded.
+    /// </summary>
+    public event Action<TreeViewExpansionEventArgs>? Expanding;
+
+    /// <summary>
+    /// Occurs immediately before an item is collapsed.
+    /// </summary>
+    public event Action<TreeViewExpansionEventArgs>? Collapsing;
+
+    /// <summary>
+    /// Gets or sets the height of each tree node row.
+    /// </summary>
+    public static readonly MewProperty<double> ItemHeightProperty =
+        MewProperty<double>.Register<TreeView>(nameof(ItemHeight), double.NaN, MewPropertyOptions.AffectsLayout);
+
+    public double ItemHeight
+    {
+        get => GetValue(ItemHeightProperty);
+        set => SetValue(ItemHeightProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the padding around each node's text.
+    /// </summary>
+    public static readonly MewProperty<Thickness> ItemPaddingProperty =
+        MewProperty<Thickness>.Register<TreeView>(nameof(ItemPadding), default, MewPropertyOptions.AffectsLayout,
+            static (self, _, _) => self.OnItemPaddingChanged());
+
+    public Thickness ItemPadding
+    {
+        get => GetValue(ItemPaddingProperty);
+        set => SetValue(ItemPaddingProperty, value);
+    }
+
+    private void OnItemPaddingChanged()
+    {
+        if (_presenter != null)
+            _presenter.ItemPadding = ItemPadding;
+        InvalidateItemBindings();
+    }
+
+    /// <summary>
+    /// Gets or sets the node template. If not set explicitly, the default template is used.
+    /// </summary>
+    public IDataTemplate ItemTemplate
+    {
+        get => _itemTemplate;
+        set
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            _itemTemplate = value;
+            _presenter.ItemTemplate = WrapItemTemplate(value);
+            InvalidateItemBindings();
+        }
+    }
+
+    /// <summary>
+    /// Sets the container-prepare hook and rebuilds the rows, since the container shape depends on
+    /// whether a hook is registered. Use the typed <c>PrepareContainer</c> extension.
+    /// </summary>
+    internal void SetPrepareContainer(PrepareContainerHandler<ItemContainer, object?>? hook)
+    {
+        _prepareContainer = hook;
+        _presenter.ItemTemplate = WrapItemTemplate(_itemTemplate);
+        InvalidateItemBindings();
+    }
+
+    /// <summary>
+    /// Sets the container-clear hook and rebuilds the rows. Use the typed <c>ClearContainer</c> extension.
+    /// </summary>
+    internal void SetClearContainer(PrepareContainerHandler<ItemContainer, object?>? hook)
+    {
+        _clearContainer = hook;
+        _presenter.ItemTemplate = WrapItemTemplate(_itemTemplate);
+        InvalidateItemBindings();
+    }
+
+    private bool HasContainerHooks => _prepareContainer != null || _clearContainer != null;
+
+    /// <summary>
+    /// Wraps the template in a row-wide <see cref="ItemContainer"/> while a hook is registered. The
+    /// container spans the indent and the expander too, and pads its content past them, so a menu or
+    /// tooltip attached to it covers the whole row. Without a hook the template root sits in the
+    /// content area as before and no extra element exists.
+    /// </summary>
+    private IDataTemplate WrapItemTemplate(IDataTemplate template)
+        => HasContainerHooks
+            ? new ItemContainerTemplate(template, IsSelected, PrepareRowContainer, _clearContainer)
+            : template;
+
+    private void PrepareRowContainer(ItemContainer container, object? item, int index, TemplateContext context)
+    {
+        // The tree draws the indent and the expander underneath the container, so the content is
+        // pushed past them here rather than by the presenter's container rect.
+        container.Padding = new Thickness(_itemsSource.GetDepth(index) * Indent + Indent, 0, 0, 0);
+        _prepareContainer?.Invoke(container, item, index, context);
+    }
+
+    private void RefreshContainerSelection()
+    {
+        if (!HasContainerHooks)
+        {
+            return;
+        }
+
+        _presenter.VisitRealized((index, element) =>
+        {
+            if (element is ItemContainer container)
+            {
+                container.SetIsSelected(IsSelected(index));
+            }
+        });
+    }
+
+    internal void VisitRealizedContainers(Action<int, FrameworkElement> visitor)
+        => _presenter.VisitRealized(visitor);
+
+    public static readonly MewProperty<double> IndentProperty =
+        MewProperty<double>.Register<TreeView>(nameof(Indent), 16.0,
+            MewPropertyOptions.AffectsLayout,
+            static (self, _, _) => self.InvalidateItemBindings());
+
+    public static readonly MewProperty<TreeViewExpandTrigger> ExpandTriggerProperty =
+        MewProperty<TreeViewExpandTrigger>.Register<TreeView>(nameof(ExpandTrigger),
+            TreeViewExpandTrigger.ClickChevron, MewPropertyOptions.None);
+
+    static TreeView()
+    {
+        FocusableProperty.OverrideDefaultValue<TreeView>(true);
+    }
+
+    /// <summary>
+    /// Gets or sets the horizontal indentation per tree level.
+    /// </summary>
+    public double Indent
+    {
+        get => GetValue(IndentProperty);
+        set => SetValue(IndentProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets which user interactions toggle node expansion.
+    /// </summary>
+    public TreeViewExpandTrigger ExpandTrigger
+    {
+        get => GetValue(ExpandTriggerProperty);
+        set => SetValue(ExpandTriggerProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the horizontal scrollbar mode. Items wider than the viewport scroll
+    /// horizontally (default: Auto).
+    /// </summary>
+    public ScrollMode HorizontalScroll
+    {
+        get => GetValue(HorizontalScrollProperty);
+        set => SetValue(HorizontalScrollProperty, value);
+    }
+
+    public static readonly MewProperty<ScrollMode> HorizontalScrollProperty =
+        MewProperty<ScrollMode>.Register<TreeView>(nameof(HorizontalScroll), ScrollMode.Auto, MewPropertyOptions.AffectsLayout,
+            static (self, _, _) => self.OnHorizontalScrollChanged());
+
+    private void OnHorizontalScrollChanged()
+    {
+        // Disabled lays items out at the viewport width so Ellipsis trimming can engage;
+        // scrollable modes lay out at the natural extent width instead.
+        if (_presenter != null)
+        {
+            _presenter.UseHorizontalExtentForLayout = HorizontalScroll != ScrollMode.Disabled;
+        }
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the TreeView class.
+    /// </summary>
+    public TreeView()
+    {
+        ItemPadding = Theme.Metrics.ItemPadding;
+
+        _itemsSource.Changed += OnItemsChanged;
+        _itemsSource.SelectionChanged += OnItemsSelectionChanged;
+
+        _itemTemplate = CreateDefaultItemTemplate();
+        _presenter = new FixedHeightItemsPresenter
+        {
+            ItemsSource = _itemsSource,
+            ItemTemplate = _itemTemplate,
+            BeforeItemRender = OnBeforeItemRender,
+            GetContainerRect = OnGetContainerRect,
+            ItemPadding = ItemPadding,
+            ItemHeight = ResolveItemHeight(),
+            ItemBindingGeneration = _itemBindingGeneration,
+            UseHorizontalExtentForLayout = true,
+        };
+
+        _scrollViewer = new ScrollViewer
+        {
+            VerticalScroll = ScrollMode.Auto,
+            BorderThickness = 0,
+            Background = default,
+            Content = _presenter,
+        };
+        _scrollViewer.SetBinding(ScrollViewer.HorizontalScrollProperty, this, HorizontalScrollProperty);
+        _scrollViewer.Parent = this;
+        _scrollViewer.SetBinding(PaddingProperty, this, PaddingProperty);
+        _scrollViewer.ScrollChanged += OnScrollViewerChanged;
+
+        _tabFocusHelper = new PendingTabFocusHelper(
+            getWindow: () => FindVisualRoot() as Window,
+            getContainer: idx =>
+            {
+                FrameworkElement? container = null;
+                _presenter.VisitRealized((i, el) => { if (i == idx) container = el; });
+                return container;
+            });
+    }
+
+    private Rect OnGetContainerRect(int i, Rect rowRect)
+    {
+        if (HasContainerHooks)
+        {
+            // The row container takes the whole row; PrepareRowContainer pads its content past the indent.
+            return rowRect;
+        }
+
+        int depth = _itemsSource.GetDepth(i);
+        double indentX = rowRect.X + depth * Indent;
+        double glyphW = Indent;
+        var contentX = indentX + glyphW;
+        return new Rect(
+            contentX,
+            rowRect.Y,
+            Math.Max(0, rowRect.Right - contentX),
+            rowRect.Height);
+    }
+
+    private void OnBeforeItemRender(IGraphicsContext context, int i, Rect itemRect)
+    {
+        double itemRadius = _presenter.ItemRadius;
+
+        bool selected = IsSelected(i);
+        if (selected)
+        {
+            var selectionBg = Theme.Palette.SelectionBackground;
+            if (itemRadius > 0)
+            {
+                context.FillRoundedRectangle(itemRect, itemRadius, itemRadius, selectionBg);
+            }
+            else
+            {
+                context.FillRectangle(itemRect, selectionBg);
+            }
+        }
+        else if (i == _hoverVisibleIndex)
+        {
+            var hoverBg = Theme.Palette.ControlBackground.Lerp(Theme.Palette.Accent, 0.15);
+            if (itemRadius > 0)
+            {
+                context.FillRoundedRectangle(itemRect, itemRadius, itemRadius, hoverBg);
+            }
+            else
+            {
+                context.FillRectangle(itemRect, hoverBg);
+            }
+        }
+
+        int depth = _itemsSource.GetDepth(i);
+        double indentX = itemRect.X + depth * Indent;
+        var glyphRect = new Rect(indentX, itemRect.Y, Indent, itemRect.Height);
+        var textColor = !IsEffectivelyEnabled
+            ? Theme.Palette.DisabledText
+            : selected ? Theme.Palette.SelectionText : Theme.Palette.WindowText;
+        if (_itemsSource.GetHasChildren(i))
+        {
+            DrawExpanderGlyph(context, glyphRect, _itemsSource.GetIsExpanded(i), textColor);
+        }
+    }
+
+    private void OnItemsChanged(ItemsChange change)
+    {
+        _observedExtentWidth = 0;
+        _presenter.RecycleAll();
+        InvalidateItemBindings();
+        _hoverVisibleIndex = -1;
+        ReevaluateMouseOverAfterScroll();
+    }
+
+    private void OnItemsSelectionChanged(int index)
+    {
+        var item = _itemsSource.SelectedItem;
+        var node = item as TreeViewNode;
+        if (ReferenceEquals(_selectedNode, node) && ReferenceEquals(_selectedItem, item))
+        {
+            return;
+        }
+
+        _selectedNode = node;
+        _selectedItem = item;
+        SyncSelectionProperties(commit: !_syncingSelection);
+        RefreshContainerSelection();
+        InvalidateVisual();
+
+        SelectedNodeChanged?.Invoke(node);
+        SelectionChanged?.Invoke(item);
+        ScrollIntoView(index);
+    }
+
+    private void InvalidateItemBindings()
+    {
+        unchecked { _itemBindingGeneration++; }
+        InvalidateMeasure();
+        InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Scrolls the selected node into view.
+    /// </summary>
+    public void ScrollIntoViewSelected() => ScrollIntoView(_itemsSource.SelectedIndex);
+
+    /// <summary>
+    /// Scrolls the specified visible item index into view.
+    /// </summary>
+    public void ScrollIntoView(int index)
+    {
+        int count = _itemsSource.Count;
+        if (index < 0 || index >= count)
+        {
+            return;
+        }
+
+        double viewport = GetViewportHeightDip();
+        if (viewport <= 0 || double.IsNaN(viewport) || double.IsInfinity(viewport))
+        {
+            RequestScrollIntoView(ScrollIntoViewRequest.IndexRequest(index));
+            return;
+        }
+
+        double itemHeight = GetPixelAlignedItemHeight();
+        if (itemHeight <= 0)
+        {
+            return;
+        }
+        double oldOffset = _scrollViewer.VerticalOffset;
+        double newOffset = ItemsViewportMath.ComputeScrollOffsetToBringItemIntoView(index, itemHeight, viewport, oldOffset);
+        if (newOffset.Equals(oldOffset))
+        {
+            return;
+        }
+        _scrollViewer.SetScrollOffsets(_scrollViewer.HorizontalOffset, newOffset);
+        InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Attempts to find the item (row) index at the specified position in this control's coordinates.
+    /// </summary>
+    public bool TryGetItemIndexAt(Point position, out int index)
+        => TryGetItemIndexAtCore(position, out index);
+
+    /// <summary>
+    /// Attempts to find the item (row) index for a mouse event routed by the window input router.
+    /// </summary>
+    public bool TryGetItemIndexAt(MouseEventArgs e, out int index)
+    {
+        ArgumentNullException.ThrowIfNull(e);
+        return TryGetItemIndexAtCore(e.GetPosition(this), out index);
+    }
+
+    private bool TryGetItemIndexAtCore(Point position, out int index)
+    {
+        index = -1;
+
+        return TryHitRow(position, out index, out _);
+    }
+
+    /// <inheritdoc />
+    protected override void OnEnabledChanged()
+    {
+        base.OnEnabledChanged();
+        InvalidateItemBindings();
+        InvalidateVisual();
+    }
+
+    protected override void OnThemeChanged(Theme oldTheme, Theme newTheme)
+    {
+        base.OnThemeChanged(oldTheme, newTheme);
+
+        if (ItemPadding == oldTheme.Metrics.ItemPadding)
+        {
+            ItemPadding = newTheme.Metrics.ItemPadding;
+        }
+
+        InvalidateItemBindings();
+    }
+
+    bool IVisualTreeHost.VisitChildren(Func<Element, bool> visitor)
+        => visitor(_scrollViewer);
+
+    /// <summary>
+    /// Checks whether the specified node is expanded.
+    /// </summary>
+    /// <param name="node">The node to check.</param>
+    /// <returns>True if the node is expanded.</returns>
+    public bool IsExpanded(TreeViewNode node)
+    {
+        if (_itemsSource is TreeViewNodeItemsView nodeView)
+        {
+            return nodeView.IsExpanded(node);
+        }
+
+        int idx = IndexOfNode(node);
+        return idx >= 0 && _itemsSource.GetIsExpanded(idx);
+    }
+
+    /// <summary>
+    /// Expands the specified node to show its children.
+    /// </summary>
+    /// <param name="node">The node to expand.</param>
+    public void Expand(TreeViewNode node)
+    {
+        int idx = IndexOfNode(node);
+        if (idx >= 0)
+        {
+            TrySetExpanded(idx, true);
+        }
+        else if (_itemsSource is TreeViewNodeItemsView nodeView)
+        {
+            nodeView.Expand(node);
+        }
+    }
+
+    /// <summary>
+    /// Collapses the specified node to hide its children.
+    /// </summary>
+    /// <param name="node">The node to collapse.</param>
+    public void Collapse(TreeViewNode node)
+    {
+        int idx = IndexOfNode(node);
+        if (idx >= 0)
+        {
+            TrySetExpanded(idx, false);
+        }
+        else if (_itemsSource is TreeViewNodeItemsView nodeView)
+        {
+            nodeView.Collapse(node);
+        }
+    }
+
+    /// <summary>
+    /// Toggles the expansion state of the specified node.
+    /// </summary>
+    /// <param name="node">The node to toggle.</param>
+    public void Toggle(TreeViewNode node)
+    {
+        if (IsExpanded(node))
+        {
+            Collapse(node);
+        }
+        else
+        {
+            Expand(node);
+        }
+    }
+
+    protected override Size MeasureContent(Size availableSize)
+    {
+        var borderInset = GetBorderVisualInset();
+        var dpi = GetDpi();
+        var dpiScale = dpi / 96.0;
+
+        double widthLimit = double.IsPositiveInfinity(availableSize.Width)
+            ? double.PositiveInfinity
+            : Math.Max(0, availableSize.Width - Padding.HorizontalThickness - borderInset * 2);
+
+        // Measure an estimated horizontal extent so we can provide overlay-style horizontal scrolling.
+        // Keep the measure sampling strategy to avoid O(N) on large trees.
+        double extentWidth = 0;
+        if (_itemsSource.Count > 0)
+        {
+            var factory = GetGraphicsFactory();
+            var style = GetTextRunStyle();
+
+            int count = _itemsSource.Count;
+            int sampleCount = Math.Clamp(count, 32, 256);
+
+            double padW = ItemPadding.HorizontalThickness;
+
+            // Sample across the whole flattened list (not just the first N items) to avoid
+            // under-estimating horizontal extent when wide items appear later in the tree.
+            for (int i = 0; i < sampleCount; i++)
+            {
+                int idx = count <= sampleCount
+                    ? i
+                    : (int)Math.Floor(i * (count - 1.0) / (sampleCount - 1.0));
+
+                var text = _itemsSource.GetText(idx);
+                if (string.IsNullOrEmpty(text))
+                {
+                    continue;
+                }
+
+                int depth = _itemsSource.GetDepth(idx);
+                double indentW = depth * Indent + Indent; // includes glyph column
+                double itemW = indentW + TextLayoutOperations.Measure(factory, text, dpi, in style).Width + padW;
+                extentWidth = Math.Max(extentWidth, itemW);
+            }
+        }
+
+        // Allow the extent to expand based on realized (templated) content width.
+        // Observe realized item natural widths during measure so arrange doesn't
+        // need to re-measure or call InvalidateMeasure().
+        UpdateObservedExtentWidthFromRealized();
+        extentWidth = Math.Max(extentWidth, _observedExtentWidth);
+
+        // Desired width is the natural item width regardless of alignment: stretch is an arrange
+        // concern.
+        double desiredWidth = double.IsPositiveInfinity(widthLimit)
+            ? extentWidth
+            : Math.Min(extentWidth, widthLimit);
+
+        double itemHeight = ResolveItemHeight();
+        double height = _itemsSource.Count * GetPixelAlignedItemHeight();
+
+        _presenter.ItemHeight = itemHeight;
+        _presenter.ExtentWidth = extentWidth;
+
+        // Let ScrollViewer compute bar visibility/metrics for the current slot.
+        _scrollViewer.Measure(new Size(
+            double.IsPositiveInfinity(availableSize.Width) ? double.PositiveInfinity : Math.Max(0, availableSize.Width - borderInset * 2),
+            double.IsPositiveInfinity(availableSize.Height) ? double.PositiveInfinity : Math.Max(0, availableSize.Height - borderInset * 2)));
+
+        double desiredHeight = double.IsPositiveInfinity(availableSize.Height)
+            ? height
+            : Math.Min(height, LayoutRounding.RoundToPixel(Math.Max(0, availableSize.Height - Padding.VerticalThickness - borderInset * 2), dpiScale));
+
+        return new Size(desiredWidth, desiredHeight)
+            .Inflate(Padding)
+            .Inflate(new Thickness(borderInset));
+    }
+
+    protected override void ArrangeContent(Rect bounds)
+    {
+        base.ArrangeContent(bounds);
+
+        _presenter.ItemBindingGeneration = _itemBindingGeneration;
+
+        var snapped = GetSnappedBorderBounds(Bounds);
+        var borderInset = GetBorderVisualInset();
+        var innerBounds = snapped.Deflate(new Thickness(borderInset));
+        _scrollViewer.Arrange(innerBounds);
+
+        if (TryConsumeScrollIntoViewRequest(out var request))
+        {
+            if (request.Kind == ScrollIntoViewRequestKind.Index)
+            {
+                ScrollIntoView(request.Index);
+            }
+            else if (request.Kind == ScrollIntoViewRequestKind.Selected)
+            {
+                ScrollIntoViewSelected();
+            }
+        }
+    }
+
+    protected override void OnRender(IGraphicsContext context)
+    {
+        var bounds = GetSnappedBorderBounds(Bounds);
+        double radius = CornerRadius;
+        var borderInset = GetBorderVisualInset();
+
+        var bg = GetValue(BackgroundProperty);
+        var borderColor = GetValue(BorderBrushProperty);
+        DrawBackgroundAndBorder(context, bounds, bg, borderColor, BorderThickness, radius);
+
+        if (_itemsSource.Count == 0)
+        {
+            return;
+        }
+
+        var dpiScale = GetDpi() / 96.0;
+        var clipR = Math.Max(0, LayoutRounding.RoundToPixel(radius, dpiScale) - borderInset);
+        _scrollViewer.CornerRadius = clipR;
+        _presenter.ItemRadius = clipR;
+
+        _scrollViewer.Render(context);
+    }
+
+    /// <summary>
+    /// Observes realized item widths using their existing DesiredSize/Bounds
+    /// (no re-measurement). Called during MeasureContent so that extent width
+    /// is settled before arrange, without needing InvalidateMeasure() from arrange.
+    /// Only expands _observedExtentWidth; never shrinks it.
+    /// </summary>
+    private void UpdateObservedExtentWidthFromRealized()
+    {
+        if (_itemsSource.Count <= 0)
+        {
+            return;
+        }
+
+        uint dpi = GetDpi();
+        if (dpi != _observedExtentDpi)
+        {
+            _observedExtentWidth = 0;
+            _observedExtentDpi = dpi;
+        }
+
+        double max = _observedExtentWidth;
+        _presenter.VisitRealized((index, element) =>
+        {
+            if (index < 0 || index >= _itemsSource.Count)
+            {
+                return;
+            }
+
+            // Use the element's already-measured DesiredSize and Bounds.
+            // No re-measurement - the item was measured during the prior layout pass.
+            double w = Math.Max(0, element.DesiredSize.Width);
+            if (w <= 0 && element.Bounds.IsEmpty)
+            {
+                return;
+            }
+
+            // A row container already carries the indent in its own padding, so it is not added again.
+            int depth = _itemsSource.GetDepth(index);
+            double indentW = element is ItemContainer ? 0 : depth * Indent + Indent;
+            double padW = ItemPadding.HorizontalThickness;
+            double rowW = indentW + w + padW;
+
+            if (w <= 0)
+            {
+                // Arranged width is a last resort only: rows stretch to the viewport, so feeding it
+                // back would make the extent track the viewport and grow by the snapping error
+                // every pass.
+                rowW = Math.Max(rowW, indentW + Math.Max(0, element.Bounds.Width) + padW);
+            }
+
+            if (rowW > max)
+            {
+                max = rowW;
+            }
+        });
+
+        _observedExtentWidth = max;
+    }
+
+    private IDataTemplate CreateDefaultItemTemplate()
+        => new DelegateTemplate<object?>(
+            build: _ =>
+                new TextBlock
+                {
+                    IsHitTestVisible = false,
+                    TextWrapping = TextWrapping.NoWrap,
+                    // Engages only when items are laid out at the viewport width
+                    // (HorizontalScroll = Disabled); scrollable modes get the full extent width.
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                },
+            bind: (view, item, index, _) =>
+            {
+                var tb = (TextBlock)view;
+
+                var text = _itemsSource.GetText(index);
+                if (tb.Text != text)
+                {
+                    tb.Text = text;
+                }
+
+                if (tb.FontFamily != FontFamily)
+                {
+                    tb.FontFamily = FontFamily;
+                }
+
+                if (!tb.FontSize.Equals(FontSize))
+                {
+                    tb.FontSize = FontSize;
+                }
+
+                if (tb.FontWeight != FontWeight)
+                {
+                    tb.FontWeight = FontWeight;
+                }
+
+                var enabled = IsEffectivelyEnabled;
+                if (tb.IsEnabled != enabled)
+                {
+                    tb.IsEnabled = enabled;
+                }
+
+                bool selected = IsSelected(index);
+                var fg = !enabled
+                    ? Theme.Palette.DisabledText
+                    : selected ? Theme.Palette.SelectionText : Theme.Palette.WindowText;
+                if (tb.Foreground != fg)
+                {
+                    tb.Foreground = fg;
+                }
+            });
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+
+        if (!IsEffectivelyEnabled || e.Button != MouseButton.Left)
+        {
+            return;
+        }
+
+        Focus();
+
+        if (!TryHitRow(e.GetPosition(this), out int index, out bool onGlyph))
+        {
+            return;
+        }
+
+        // A finger press may still turn into a scroll, so touch waits for the release to commit.
+        // Mouse keeps committing here, where a drag selection has to start.
+        if (e.PointerType == PointerType.Touch)
+        {
+            _touchPressIndex = index;
+            _touchPressOnGlyph = onGlyph;
+            e.Handled = true;
+            return;
+        }
+
+        SelectRow(index, onGlyph, e.Modifiers);
+        e.Handled = true;
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+
+        int pressed = _touchPressIndex;
+        bool onGlyph = _touchPressOnGlyph;
+        _touchPressIndex = -1;
+        if (e.Handled || !IsEffectivelyEnabled || pressed < 0 || e.PointerType != PointerType.Touch)
+        {
+            return;
+        }
+
+        if (TryHitRow(e.GetPosition(this), out int index, out _) && index == pressed)
+        {
+            SelectRow(index, onGlyph, e.Modifiers);
+            e.Handled = true;
+        }
+    }
+
+    private void SelectRow(int index, bool onGlyph, ModifierKeys modifiers)
+    {
+        var multi = MultiView;
+        if (multi != null && multi.SelectionMode != ItemsSelectionMode.Single)
+        {
+            ItemsSelectionInput.HandleClick(multi, index, modifiers);
+        }
+        else
+        {
+            _itemsSource.SelectedIndex = index;
+        }
+
+        bool hasChildren = _itemsSource.GetHasChildren(index);
+        if (hasChildren && (onGlyph || ExpandTrigger == TreeViewExpandTrigger.ClickNode))
+        {
+            TryToggleExpanded(index);
+        }
+    }
+
+    protected override void OnMouseDoubleClick(MouseEventArgs e)
+    {
+        base.OnMouseDoubleClick(e);
+
+        if (e.Handled || !IsEffectivelyEnabled || e.Button != MouseButton.Left)
+        {
+            return;
+        }
+
+        if (ExpandTrigger != TreeViewExpandTrigger.DoubleClickNode)
+        {
+            return;
+        }
+
+        if (!TryHitRow(e.GetPosition(this), out int index, out bool onGlyph) || onGlyph)
+        {
+            return;
+        }
+
+        if (!_itemsSource.GetHasChildren(index))
+        {
+            return;
+        }
+
+        Focus();
+        _itemsSource.SelectedIndex = index;
+        TryToggleExpanded(index);
+        e.Handled = true;
+    }
+
+    private void ReevaluateMouseOverAfterScroll()
+    {
+        if (FindVisualRoot() is Window window)
+        {
+            window.ReevaluateMouseOver();
+        }
+    }
+
+    private void OnScrollViewerChanged()
+    {
+        if (_hasLastMousePosition && TryHitRow(_lastMousePosition, out int hover, out _))
+        {
+            _hoverVisibleIndex = hover;
+        }
+        else
+        {
+            _hoverVisibleIndex = -1;
+        }
+
+        InvalidateVisual();
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+
+        if (!IsEffectivelyEnabled)
+        {
+            return;
+        }
+
+        _hasLastMousePosition = true;
+        _lastMousePosition = e.GetPosition(this);
+
+        int newHover = -1;
+        if (TryHitRow(e.GetPosition(this), out int index, out _))
+        {
+            newHover = index;
+        }
+
+        if (_hoverVisibleIndex != newHover)
+        {
+            _hoverVisibleIndex = newHover;
+            InvalidateVisual();
+        }
+    }
+
+    protected override void OnMouseLeave()
+    {
+        base.OnMouseLeave();
+
+        _hasLastMousePosition = false;
+
+        if (_hoverVisibleIndex != -1)
+        {
+            _hoverVisibleIndex = -1;
+            InvalidateVisual();
+        }
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+
+        if (e.Handled || !IsEffectivelyEnabled)
+        {
+            return;
+        }
+
+        int count = _itemsSource.Count;
+        if (count <= 0)
+        {
+            return;
+        }
+
+        int selected = _itemsSource.SelectedIndex;
+        int current = selected >= 0 ? selected : 0;
+
+        var multiView = MultiView;
+        if (multiView != null && multiView.SelectionMode != ItemsSelectionMode.Single && ScrollableItemsBase.IsSelectAllShortcut(e))
+        {
+            multiView.SelectRange(0, count - 1, clearExisting: true);
+            e.Handled = true;
+            InvalidateVisual();
+            return;
+        }
+
+        switch (e.Key)
+        {
+            case Key.Up:
+            case Key.Down:
+            case Key.Home:
+            case Key.End:
+                if (ScrollableItemsBase.TryGetListNavigationTarget(e.Key, current, count, pageStep: 1, supportsPaging: false, out int target))
+                {
+                    ApplyKeyboardSelect(target, e.Modifiers);
+                    e.Handled = true;
+                }
+                break;
+
+            case Key.Space:
+            {
+                int index = _itemsSource.SelectedIndex;
+                if (index < 0 || index >= count)
+                {
+                    _itemsSource.SelectedIndex = 0;
+                    e.Handled = true;
+                    break;
+                }
+
+                if (_itemsSource.GetHasChildren(index))
+                {
+                    e.Handled = TryToggleExpanded(index);
+                }
+            }
+            break;
+
+            case Key.Right:
+            {
+                int index = _itemsSource.SelectedIndex;
+                if (index < 0 || index >= count)
+                {
+                    break;
+                }
+
+                if (_itemsSource.GetHasChildren(index) && !_itemsSource.GetIsExpanded(index))
+                {
+                    e.Handled = TrySetExpanded(index, true);
+                }
+            }
+            break;
+
+            case Key.Left:
+            {
+                int index = _itemsSource.SelectedIndex;
+                if (index < 0 || index >= count)
+                {
+                    break;
+                }
+
+                if (_itemsSource.GetHasChildren(index) && _itemsSource.GetIsExpanded(index))
+                {
+                    e.Handled = TrySetExpanded(index, false);
+                }
+            }
+            break;
+        }
+
+        if (e.Handled)
+        {
+            Focus();
+            InvalidateVisual();
+        }
+    }
+
+    bool IFocusIntoViewHost.OnDescendantFocused(UIElement focusedElement)
+    {
+        if (focusedElement == this)
+        {
+            return false;
+        }
+
+        if (!ScrollableItemsBase.TryFindRealizedIndex(_presenter, focusedElement, out int found, out _) || found >= _itemsSource.Count)
+        {
+            return false;
+        }
+
+        if (_itemsSource.SelectedIndex != found)
+        {
+            _itemsSource.SelectedIndex = found;
+        }
+        else
+        {
+            ScrollIntoView(found);
+        }
+
+        return true;
+    }
+
+    bool IVirtualizedTabNavigationHost.TryMoveFocusFromDescendant(UIElement focusedElement, bool moveForward)
+    {
+        if (!IsEffectivelyEnabled || _itemsSource.Count == 0)
+        {
+            return false;
+        }
+
+        if (!ScrollableItemsBase.TryFindRealizedIndex(_presenter, focusedElement, out int found, out var foundContainer))
+        {
+            return false;
+        }
+
+        var edge = moveForward
+            ? FocusManager.FindLastFocusable(foundContainer)
+            : FocusManager.FindFirstFocusable(foundContainer);
+        if (edge != null && !ReferenceEquals(edge, focusedElement))
+        {
+            return false;
+        }
+
+        int target = moveForward ? found + 1 : found - 1;
+        if (target < 0 || target >= _itemsSource.Count)
+        {
+            return false;
+        }
+
+        _itemsSource.SelectedIndex = target;
+        ScrollIntoView(target);
+        _tabFocusHelper.Schedule(target, moveForward);
+        return true;
+    }
+
+    private bool TryHitRow(Point position, out int index, out bool onGlyph)
+    {
+        index = -1;
+        onGlyph = false;
+
+        if (_itemsSource.Count == 0)
+        {
+            return false;
+        }
+
+        // Don't treat scrollbar interaction as row hit/activation.
+        if (_scrollViewer.HitTest(position) is ScrollBar)
+        {
+            return false;
+        }
+
+        var bounds = GetSnappedBorderBounds(new Rect(0, 0, Bounds.Width, Bounds.Height));
+        var dpiScale = GetDpi() / 96.0;
+        var innerBounds = bounds.Deflate(new Thickness(GetBorderVisualInset()));
+        var contentBounds = LayoutRounding.SnapViewportRectToPixels(innerBounds.Deflate(Padding), dpiScale);
+
+        double itemHeight = GetPixelAlignedItemHeight();
+        if (itemHeight <= 0)
+        {
+            return false;
+        }
+
+        if (!ItemsViewportMath.TryGetItemIndexAtY(
+                position.Y,
+                contentBounds.Y,
+                _scrollViewer.VerticalOffset,
+                itemHeight,
+                _itemsSource.Count,
+                out index))
+        {
+            return false;
+        }
+
+        double rowY = contentBounds.Y + index * itemHeight - _scrollViewer.VerticalOffset;
+        double horizontalOffset = _scrollViewer.HorizontalOffset;
+        int depth = _itemsSource.GetDepth(index);
+        var glyphRect = new Rect(contentBounds.X - horizontalOffset + depth * Indent, rowY, Indent, itemHeight);
+        onGlyph = glyphRect.Contains(position);
+        return true;
+    }
+
+    private double GetViewportHeightDip()
+    {
+        if (Bounds.Width > 0 && Bounds.Height > 0)
+        {
+            var snapped = GetSnappedBorderBounds(Bounds);
+            var borderInset = GetBorderVisualInset();
+            var innerBounds = snapped.Deflate(new Thickness(borderInset));
+            var dpiScale = GetDpi() / 96.0;
+            return LayoutRounding.RoundToPixel(Math.Max(0, innerBounds.Height - Padding.VerticalThickness), dpiScale);
+        }
+
+        return 0;
+    }
+
+    private double ResolveItemHeight()
+    {
+        if (!double.IsNaN(ItemHeight) && ItemHeight > 0)
+        {
+            return ItemHeight;
+        }
+
+        return Math.Max(Theme.Metrics.BaseControlHeight, 24);
+    }
+
+    // Pixel-aligned item height matching the FixedHeightItemsPresenter's visual layout.
+    // Needed so hit-test, extent, and ScrollIntoView agree with the rendered rows
+    // (esp. at 125% DPI where a 24 DIP row rounds to 24.8 DIP per row).
+    private double GetPixelAlignedItemHeight()
+    {
+        double h = ResolveItemHeight();
+        if (h <= 0 || double.IsNaN(h) || double.IsInfinity(h))
+        {
+            return 0;
+        }
+
+        return LayoutRounding.RoundToPixel(h, GetDpi() / 96.0);
+    }
+
+    private void SetSelectedNodeCore(TreeViewNode? node)
+    {
+        _itemsSource.SelectedItem = node;
+    }
+
+    private void RequestScrollIntoView(ScrollIntoViewRequest request)
+        => _scrollIntoViewRequest = request;
+
+    private bool TryConsumeScrollIntoViewRequest(out ScrollIntoViewRequest request)
+    {
+        if (_scrollIntoViewRequest.IsNone)
+        {
+            request = default;
+            return false;
+        }
+
+        request = _scrollIntoViewRequest;
+        _scrollIntoViewRequest.Clear();
+        return true;
+    }
+
+    private int IndexOfNode(TreeViewNode node)
+        => IndexOfItem(node, _itemsSource.KeySelector?.Invoke(node));
+
+    private bool TryToggleExpanded(int index)
+    {
+        if (index < 0 || index >= _itemsSource.Count)
+        {
+            return false;
+        }
+
+        return TrySetExpanded(index, !_itemsSource.GetIsExpanded(index));
+    }
+
+    private bool TrySetExpanded(int index, bool expanded)
+    {
+        if (index < 0 || index >= _itemsSource.Count)
+        {
+            return false;
+        }
+
+        if (expanded && !_itemsSource.GetHasChildren(index))
+        {
+            return false;
+        }
+
+        if (_itemsSource.GetIsExpanded(index) == expanded)
+        {
+            return false;
+        }
+
+        var item = _itemsSource.GetItem(index);
+        var key = _itemsSource.KeySelector?.Invoke(item);
+        var args = new TreeViewExpansionEventArgs(item);
+
+        if (expanded)
+        {
+            Expanding?.Invoke(args);
+        }
+        else
+        {
+            Collapsing?.Invoke(args);
+        }
+
+        index = IndexOfItem(item, key);
+        if (index < 0)
+        {
+            return false;
+        }
+
+        if (expanded && !_itemsSource.GetHasChildren(index))
+        {
+            return false;
+        }
+
+        if (_itemsSource.GetIsExpanded(index) != expanded)
+        {
+            _itemsSource.SetIsExpanded(index, expanded);
+        }
+
+        return true;
+    }
+
+    private int IndexOfItem(object? item, object? key)
+    {
+        int count = _itemsSource.Count;
+        for (int i = 0; i < count; i++)
+        {
+            if (ReferenceEquals(_itemsSource.GetItem(i), item))
+            {
+                return i;
+            }
+        }
+
+        var keySelector = _itemsSource.KeySelector;
+        if (keySelector == null || key == null)
+        {
+            return -1;
+        }
+
+        for (int i = 0; i < count; i++)
+        {
+            if (Equals(keySelector(_itemsSource.GetItem(i)), key))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static void DrawExpanderGlyph(IGraphicsContext context, Rect glyphRect, bool expanded, Color color)
+    {
+        var center = new Point(glyphRect.X + glyphRect.Width / 2, glyphRect.Y + glyphRect.Height / 2);
+        double size = 4;
+        Glyph.Draw(context, center, size, color, expanded ? GlyphKind.ChevronDown : GlyphKind.ChevronRight);
+    }
+}
+
+/// <summary>
+/// Specifies which user interaction(s) toggle node expansion in a <see cref="TreeView"/>.
+/// </summary>
+public enum TreeViewExpandTrigger
+{
+    /// <summary>
+    /// Expands/collapses when the expander chevron is clicked.
+    /// </summary>
+    ClickChevron,
+
+    /// <summary>
+    /// Expands/collapses when the expander chevron is clicked, or when a node row is double-clicked.
+    /// </summary>
+    DoubleClickNode,
+
+    /// <summary>
+    /// Expands/collapses when the expander chevron is clicked, or when a node row is single-clicked.
+    /// </summary>
+    ClickNode,
+}
+
+/// <summary>
+/// Provides the item associated with a tree expansion-state change.
+/// </summary>
+public sealed class TreeViewExpansionEventArgs
+{
+    public TreeViewExpansionEventArgs(object? item)
+    {
+        Item = item;
+    }
+
+    public object? Item { get; }
+}

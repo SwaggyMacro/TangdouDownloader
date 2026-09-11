@@ -8,17 +8,21 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: Release tag name (for example v0.5)
+        description: Release tag name (for example v1.0.3)
         required: false
-        default: v0.5
+        default: v1.0.3
 
 permissions:
   contents: write
 
+env:
+  DOTNET_VERSION: 10.0.x
+  UPX_VERSION: 5.0.2
+
 jobs:
   release:
     name: Create GitHub release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       tag_name: ${{ steps.vars.outputs.TAG_NAME }}
     steps:
@@ -48,35 +52,52 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Windows x64
-            os: windows-latest
-            rid: win-x64
-            runtime: win-x64
-            executable: TangdouDownloader.Desktop.exe
-            asset_name: TangdouDownloader-win-x64.exe
           - name: Linux x64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             rid: linux-x64
-            runtime: linux-x64
-            executable: TangdouDownloader.Desktop
-            asset_name: TangdouDownloader-linux-x64
+            binary: TangdouDownloader.Desktop
+            archive: TangdouDownloader-linux-x64.tar.gz
+            archive_format: tar
+            upx_platform: amd64_linux
           - name: Linux arm64
-            os: ubuntu-latest
+            os: ubuntu-24.04-arm
             rid: linux-arm64
-            runtime: linux-arm64
-            executable: TangdouDownloader.Desktop
-            asset_name: TangdouDownloader-linux-arm64
+            binary: TangdouDownloader.Desktop
+            archive: TangdouDownloader-linux-arm64.tar.gz
+            archive_format: tar
+            upx_platform: arm64_linux
+          - name: Windows x64
+            os: windows-2025
+            rid: win-x64
+            binary: TangdouDownloader.Desktop.exe
+            archive: TangdouDownloader-win-x64.zip
+            archive_format: zip
+            upx_platform: win64
+          - name: Windows arm64
+            os: windows-11-arm
+            rid: win-arm64
+            binary: TangdouDownloader.Desktop.exe
+            archive: TangdouDownloader-win-arm64.zip
+            archive_format: zip
+            upx_platform: win64
           - name: macOS x64
-            os: macos-latest
+            os: macos-15-intel
             rid: osx-x64
-            executable: TangdouDownloader.Desktop
-            asset_name: TangdouDownloader-macos-x64
+            binary: TangdouDownloader.Desktop
+            archive: TangdouDownloader-macos-x64.dmg
+            archive_format: dmg
+            upx_platform: macos
           - name: macOS arm64
-            os: macos-latest
+            os: macos-15
             rid: osx-arm64
-            executable: TangdouDownloader.Desktop
-            asset_name: TangdouDownloader-macos-arm64
+            binary: TangdouDownloader.Desktop
+            archive: TangdouDownloader-macos-arm64.dmg
+            archive_format: dmg
+            upx_platform: macos
     runs-on: ${{ matrix.os }}
+    env:
+      PUBLISH_DIR: publish/${{ matrix.rid }}
+      DIST_DIR: dist/${{ matrix.rid }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -84,40 +105,132 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.x
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Install Linux build dependencies and UPX
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y clang zlib1g-dev tar xz-utils
+          curl --fail --location --retry 3 \
+            "https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-${{ matrix.upx_platform }}.tar.xz" \
+            --output "$RUNNER_TEMP/upx.tar.xz"
+          mkdir -p "$RUNNER_TEMP/upx"
+          tar -xJf "$RUNNER_TEMP/upx.tar.xz" -C "$RUNNER_TEMP/upx" --strip-components=1
+          echo "$RUNNER_TEMP/upx" >> "$GITHUB_PATH"
+
+      - name: Install Windows UPX
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $archive = "upx-$env:UPX_VERSION-win64.zip"
+          $download = Join-Path $env:RUNNER_TEMP $archive
+          $install = Join-Path $env:RUNNER_TEMP 'upx'
+          Invoke-WebRequest -Uri "https://github.com/upx/upx/releases/download/v$env:UPX_VERSION/$archive" -OutFile $download
+          Expand-Archive -LiteralPath $download -DestinationPath $install -Force
+          $upx = Get-ChildItem -LiteralPath $install -Filter upx.exe -Recurse | Select-Object -First 1
+          if ($null -eq $upx) { throw 'UPX executable was not found after extraction.' }
+          $upx.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install macOS UPX
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew list upx >/dev/null 2>&1 || brew install upx
 
       - name: Restore
-        run: dotnet restore TangdouDownloader.slnx
+        run: dotnet restore TangdouDownloader.slnx --runtime ${{ matrix.rid }}
 
-      - name: Publish self-contained desktop app
-        run: >-
-          dotnet publish TangdouDownloader.Desktop/TangdouDownloader.Desktop.csproj
-          --configuration Release
-          --runtime ${{ matrix.rid }}
-          --self-contained true
-          --output publish/${{ matrix.rid }}
-          -p:PublishSingleFile=true
-          -p:PublishAot=false
-          -p:IncludeNativeLibrariesForSelfExtract=true
-          -p:EnableCompressionInSingleFile=true
-          -p:PublishTrimmed=true
-          -p:TrimMode=partial
-          -p:PublishReadyToRun=false
-          -p:DebuggerSupport=false
-          -p:StackTraceSupport=false
-          -p:DebugType=None
-          -p:DebugSymbols=false
-          -p:StripSymbols=true
+      - name: Publish Native AOT single-file application
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet publish TangdouDownloader.Desktop/TangdouDownloader.Desktop.csproj \
+            --configuration Release \
+            --runtime "${{ matrix.rid }}" \
+            --self-contained true \
+            --output "$PUBLISH_DIR" \
+            -p:PublishAot=true \
+            -p:PublishSingleFile=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true \
+            -p:IncludeAllContentForSelfExtract=true \
+            -p:EnableCompressionInSingleFile=true \
+            -p:PublishTrimmed=true \
+            -p:TrimMode=partial \
+            -p:PublishReadyToRun=false \
+            -p:DebuggerSupport=false \
+            -p:StackTraceSupport=false \
+            -p:DebugType=None \
+            -p:DebugSymbols=false \
+            -p:StripSymbols=true
 
-      - name: Name single-file application
+      - name: Prepare and compress Linux or Windows package
+        if: matrix.archive_format != 'dmg'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$DIST_DIR/TangdouDownloader"
+          cp -a "$PUBLISH_DIR"/. "$DIST_DIR/TangdouDownloader/"
+          mv "$DIST_DIR/TangdouDownloader/${{ matrix.binary }}" "$DIST_DIR/TangdouDownloader/TangdouDownloader${{ runner.os == 'Windows' && '.exe' || '' }}"
+          upx --best --lzma "$DIST_DIR/TangdouDownloader/TangdouDownloader${{ runner.os == 'Windows' && '.exe' || '' }}"
+
+      - name: Create Linux archive
+        if: matrix.archive_format == 'tar'
+        shell: bash
+        run: tar -C "$DIST_DIR" -czf "${{ matrix.archive }}" TangdouDownloader
+
+      - name: Create Windows archive
+        if: matrix.archive_format == 'zip'
         shell: pwsh
-        run: Move-Item -LiteralPath "publish/${{ matrix.rid }}/${{ matrix.executable }}" -Destination "${{ matrix.asset_name }}"
+        run: Compress-Archive -Path "$env:DIST_DIR/TangdouDownloader" -DestinationPath "${{ matrix.archive }}" -Force
 
-      - name: Upload executable to release
+      - name: Prepare macOS application bundle
+        if: matrix.archive_format == 'dmg'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$DIST_DIR/TangdouDownloader.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp -a "$PUBLISH_DIR"/. "$app/Contents/MacOS/"
+          upx --best --lzma "$app/Contents/MacOS/${{ matrix.binary }}"
+          cat > "$app/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDisplayName</key>
+            <string>TangdouDownloader</string>
+            <key>CFBundleExecutable</key>
+            <string>TangdouDownloader.Desktop</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.tangdou.downloader</string>
+            <key>CFBundleName</key>
+            <string>TangdouDownloader</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>1.0.2</string>
+            <key>CFBundleVersion</key>
+            <string>1.0.2</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>12.0</string>
+          </dict>
+          </plist>
+          PLIST
+
+      - name: Create macOS DMG
+        if: matrix.archive_format == 'dmg'
+        shell: bash
+        run: hdiutil create -volname "TangdouDownloader" -srcfolder "$DIST_DIR" -format UDZO -ov "${{ matrix.archive }}"
+
+      - name: Upload release package
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.release.outputs.tag_name }}
-          files: ${{ matrix.asset_name }}
+          files: ${{ matrix.archive }}
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
