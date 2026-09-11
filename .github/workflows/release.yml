@@ -59,6 +59,7 @@ jobs:
             archive: TangdouDownloader-linux-x64.tar.gz
             archive_format: tar
             upx_platform: amd64_linux
+            upx: true
           - name: Linux arm64
             os: ubuntu-24.04-arm
             rid: linux-arm64
@@ -66,6 +67,7 @@ jobs:
             archive: TangdouDownloader-linux-arm64.tar.gz
             archive_format: tar
             upx_platform: arm64_linux
+            upx: true
           - name: Windows x64
             os: windows-2025
             rid: win-x64
@@ -73,6 +75,7 @@ jobs:
             archive: TangdouDownloader-win-x64.zip
             archive_format: zip
             upx_platform: win64
+            upx: true
           - name: Windows arm64
             os: windows-11-arm
             rid: win-arm64
@@ -80,6 +83,7 @@ jobs:
             archive: TangdouDownloader-win-arm64.zip
             archive_format: zip
             upx_platform: win64
+            upx: false
           - name: macOS x64
             os: macos-15-intel
             rid: osx-x64
@@ -87,6 +91,7 @@ jobs:
             archive: TangdouDownloader-macos-x64.dmg
             archive_format: dmg
             upx_platform: macos
+            upx: true
           - name: macOS arm64
             os: macos-15
             rid: osx-arm64
@@ -94,6 +99,7 @@ jobs:
             archive: TangdouDownloader-macos-arm64.dmg
             archive_format: dmg
             upx_platform: macos
+            upx: true
     runs-on: ${{ matrix.os }}
     env:
       PUBLISH_DIR: publish/${{ matrix.rid }}
@@ -108,7 +114,7 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Install Linux build dependencies and UPX
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.upx == true
         shell: bash
         run: |
           set -euo pipefail
@@ -122,7 +128,7 @@ jobs:
           echo "$RUNNER_TEMP/upx" >> "$GITHUB_PATH"
 
       - name: Install Windows UPX
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.upx == true
         shell: pwsh
         run: |
           $archive = "upx-$env:UPX_VERSION-win64.zip"
@@ -175,7 +181,11 @@ jobs:
           mkdir -p "$DIST_DIR/TangdouDownloader"
           cp -a "$PUBLISH_DIR"/. "$DIST_DIR/TangdouDownloader/"
           mv "$DIST_DIR/TangdouDownloader/${{ matrix.binary }}" "$DIST_DIR/TangdouDownloader/TangdouDownloader${{ runner.os == 'Windows' && '.exe' || '' }}"
-          upx --best --lzma "$DIST_DIR/TangdouDownloader/TangdouDownloader${{ runner.os == 'Windows' && '.exe' || '' }}"
+          if [ "${{ matrix.upx }}" = "true" ]; then
+            upx --best --lzma "$DIST_DIR/TangdouDownloader/TangdouDownloader${{ runner.os == 'Windows' && '.exe' || '' }}"
+          else
+            echo "Skipping UPX: UPX does not support Windows ARM64 PE binaries."
+          fi
 
       - name: Create Linux archive
         if: matrix.archive_format == 'tar'
