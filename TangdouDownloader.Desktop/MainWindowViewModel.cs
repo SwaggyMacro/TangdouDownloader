@@ -1,18 +1,15 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
-using Avalonia.Media.Imaging;
-using Avalonia.Threading;
-using Irihi.Avalonia.Shared.Helpers;
-using ReactiveUI;
-using ReactiveUI.Primitives;
+using Aprillz.MewUI;
 using TangdouDownloader.Core;
 
 namespace TangdouDownloader.Desktop;
 
-public sealed class DownloadItem : ReactiveObject
+public sealed class DownloadItem : INotifyPropertyChanged
 {
     private bool _isSelected;
     private int _progress;
@@ -24,7 +21,7 @@ public sealed class DownloadItem : ReactiveObject
     private string? _filePath;
     private string? _errorMessage;
     private string? _coverUrl;
-    private Bitmap? _coverImage;
+    private ImageSource? _coverImage;
     private string _title = string.Empty;
     private string _url = string.Empty;
 
@@ -34,8 +31,14 @@ public sealed class DownloadItem : ReactiveObject
     public required string Url { get => _url; set => SetField(ref _url, value); }
     public string OriginalUrl { get; init; } = string.Empty;
     public required string Quality { get; init; }
+    public int DownloadThreads { get; set; } = 1;
     public bool IsSelected { get => _isSelected; set => SetField(ref _isSelected, value); }
-    public int Progress { get => _progress; set { if (SetField(ref _progress, value)) OnPropertyChanged(nameof(ProgressLabel)); } }
+    public bool? IsSelectedNullable
+    {
+        get => _isSelected;
+        set => IsSelected = value ?? false;
+    }
+    public int Progress { get => _progress; set { if (SetField(ref _progress, value)) OnPropertyChanged(nameof(ProgressValue)); OnPropertyChanged(nameof(ProgressLabel)); } }
     public long BytesReceived { get => _bytesReceived; set { if (SetField(ref _bytesReceived, value)) OnPropertyChanged(nameof(TransferLabel)); } }
     public long TotalBytes { get => _totalBytes; set { if (SetField(ref _totalBytes, value)) { OnPropertyChanged(nameof(SizeLabel)); OnPropertyChanged(nameof(TransferLabel)); } } }
     public double SpeedBytesPerSecond { get => _speedBytesPerSecond; set { if (SetField(ref _speedBytesPerSecond, value)) OnPropertyChanged(nameof(TransferLabel)); } }
@@ -56,26 +59,33 @@ public sealed class DownloadItem : ReactiveObject
             OnPropertyChanged(nameof(IsPaused));
             OnPropertyChanged(nameof(IsFailed));
             OnPropertyChanged(nameof(StatusIcon));
+            OnPropertyChanged(nameof(StatusBackground));
+            OnPropertyChanged(nameof(StatusForeground));
+            OnPropertyChanged(nameof(StatusBorder));
         }
     }
     public string RemainingTime { get => _remainingTime; set { if (SetField(ref _remainingTime, value)) OnPropertyChanged(nameof(StatusDetail)); } }
     public string? FilePath { get => _filePath; set { if (SetField(ref _filePath, value)) OnPropertyChanged(nameof(CanOpenFile)); } }
     public string? ErrorMessage { get => _errorMessage; set { if (SetField(ref _errorMessage, value)) { OnPropertyChanged(nameof(HasError)); OnPropertyChanged(nameof(StatusDetail)); } } }
     public string? CoverUrl { get => _coverUrl; set => SetField(ref _coverUrl, value); }
-    public Bitmap? CoverImage
+    public ImageSource? CoverImage
     {
         get => _coverImage;
         set
         {
             if (!SetField(ref _coverImage, value)) return;
+            OnPropertyChanged(nameof(CoverImageSource));
             OnPropertyChanged(nameof(HasCoverImage));
             OnPropertyChanged(nameof(ShowCoverPlaceholder));
         }
     }
     public bool HasCoverImage => CoverImage is not null;
     public bool ShowCoverPlaceholder => CoverImage is null;
+    public IImageSource? CoverImageSource => CoverImage;
+    public string VidText => Vid;
     public string QualityFormat => $"{Quality} / MP4";
     public string ProgressLabel => TotalBytes > 0 ? $"{Progress}%" : BytesReceived > 0 ? "下载中" : "等待中";
+    public double ProgressValue => Math.Clamp(Progress, 0, 100);
     public string TransferLabel => $"{FormatBytes(BytesReceived)} / {(TotalBytes > 0 ? FormatBytes(TotalBytes) : "未知")}  {FormatBytes((long)SpeedBytesPerSecond)}/s";
     public string SizeLabel => TotalBytes > 0 ? FormatBytes(TotalBytes) : BytesReceived > 0 ? FormatBytes(BytesReceived) : "--";
     public bool CanPause => Status == "下载中" || Status == "解析中";
@@ -99,14 +109,35 @@ public sealed class DownloadItem : ReactiveObject
         "下载失败" or "解析失败" => "!",
         _ => "•"
     };
+    public Color StatusBackground => Status switch
+    {
+        "下载中" or "解析中" => ThemePalette.AccentSoft,
+        "已完成" => ThemePalette.SuccessSoft,
+        "已暂停" => ThemePalette.WarningSoft,
+        "下载失败" or "解析失败" => ThemePalette.DangerSoft,
+        _ => ThemePalette.Soft,
+    };
+    public Color StatusForeground => Status switch
+    {
+        "下载中" or "解析中" => ThemePalette.Accent,
+        "已完成" => ThemePalette.Success,
+        "已暂停" => ThemePalette.Warning,
+        "下载失败" or "解析失败" => ThemePalette.Danger,
+        _ => ThemePalette.TextSecondary,
+    };
+    public Color StatusBorder => StatusBackground;
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? name = null)
     {
         if (EqualityComparer<T>.Default.Equals(field, value)) return false;
-        this.RaiseAndSetIfChanged(ref field, value, name);
+        field = value;
+        OnPropertyChanged(name);
         return true;
     }
-    private void OnPropertyChanged([CallerMemberName] string? name = null) => this.RaisePropertyChanged(name);
+    private void OnPropertyChanged([CallerMemberName] string? name = null) =>
+        PropertyChanged?.Invoke(this, new(name));
+
+    public event PropertyChangedEventHandler? PropertyChanged;
     internal static string FormatBytes(long value)
     {
         if (value < 1024) return $"{Math.Max(0, value)} B";
@@ -122,30 +153,31 @@ public sealed record HistoryItem(string Title, string Vid, string Quality, strin
     public string CompletedAtLabel => CompletedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm");
 }
 
-public sealed class MainWindowViewModel : ReactiveObject, IDisposable
+public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 {
     private const string DownloadsPage = "downloads";
     private const string HistoryPage = "history";
+    private const int CoverThumbnailWidth = 168;
+    private const int CoverThumbnailHeight = 104;
+    private const double CoverThumbnailCornerRadius = 16;
     private readonly IVideoResolver _resolver;
     private readonly IVideoDownloader _downloader;
     private readonly IWorkspaceStateStore _stateStore;
     private IWorkspacePlatform _platform;
+    private Window? _owner;
     private readonly Dictionary<DownloadItem, CancellationTokenSource> _activeDownloads = [];
     private readonly object _activeLock = new();
     private readonly CancellationTokenSource _lifetime = new();
+    private SynchronizationContext? _uiContext = SynchronizationContext.Current;
     private static readonly HttpClient CoverClient = new();
     private string _inputText = string.Empty;
     private string _selectedQuality = "1080P";
     private int _selectedConcurrency = 4;
-    private int _selectedDownloadThreads = 2;
     private string _downloadDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "Tangdou Downloads");
     private string _page = DownloadsPage;
     private string _searchText = string.Empty;
     private string _filter = "全部";
     private string _statusMessage = "等待添加糖豆视频链接";
-    private string _toastMessage = string.Empty;
-    private bool _isToastVisible;
-    private int _toastGeneration;
     private bool _isDarkTheme = true;
 
     public MainWindowViewModel(
@@ -163,47 +195,6 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         Items.CollectionChanged += OnItemsChanged;
         Refresh();
 
-        // Navigation and filters are UI-only state changes. Keep them synchronous so
-        // ReactiveUI does not raise CanExecuteChanged from a worker scheduler.
-        ShowDownloadsCommand = ReactiveCommand.Create(() => { Page = DownloadsPage; });
-        ShowHistoryCommand = ReactiveCommand.Create(() => { Page = HistoryPage; });
-        OpenGithubCommand = ReactiveCommand.Create(() => _platform.OpenPath("https://github.com/SwaggyMacro/TangdouDownloader"));
-        PasteClipboardCommand = ReactiveCommand.CreateFromTask(PasteClipboardAsync);
-        ClearInputCommand = ReactiveCommand.Create(() => { InputText = string.Empty; });
-        BrowseDirectoryCommand = ReactiveCommand.CreateFromTask(BrowseDirectoryAsync);
-        ResolveCommand = ReactiveCommand.CreateFromTask(ResolveAndQueueAsync);
-        DeleteSelectedCommand = ReactiveCommand.CreateFromTask(DeleteSelectedAsync);
-        PauseAllCommand = ReactiveCommand.CreateFromTask(PauseAllAsync);
-        StartAllCommand = ReactiveCommand.Create(StartAllInBackground);
-        FilterDownloadingCommand = ReactiveCommand.Create(() => SetFilter("下载中"));
-        FilterCompletedCommand = ReactiveCommand.Create(() => SetFilter("已完成"));
-        FilterQueuedCommand = ReactiveCommand.Create(() => SetFilter("排队中"));
-        FilterAllCommand = ReactiveCommand.Create(() => SetFilter("全部"));
-        RefreshCommand = ReactiveCommand.Create(Refresh);
-        PauseItemCommand = ReactiveCommand.CreateFromTask<DownloadItem>(PauseItemAsync);
-        ResumeItemCommand = ReactiveCommand.CreateFromTask<DownloadItem>(ResumeItemAsync);
-        RetryItemCommand = ReactiveCommand.CreateFromTask<DownloadItem>(RetryItemAsync);
-        CancelItemCommand = ReactiveCommand.CreateFromTask<DownloadItem>(CancelItemAsync);
-        PlayItemCommand = ReactiveCommand.Create<DownloadItem>(item => { if (item.CanOpenFile) _platform.OpenPath(item.FilePath!); });
-        OpenItemDirectoryCommand = ReactiveCommand.Create<DownloadItem>(item => { if (item.FilePath is not null) _platform.OpenPath(Path.GetDirectoryName(item.FilePath)!); });
-        CopyHistoryUrlCommand = ReactiveCommand.CreateFromTask<HistoryItem>(CopyHistoryUrlAsync);
-        OpenHistoryDirectoryCommand = ReactiveCommand.Create<HistoryItem>(item =>
-        {
-            var directory = Path.GetDirectoryName(item.FilePath);
-            if (!string.IsNullOrWhiteSpace(directory)) _platform.OpenPath(directory);
-        });
-
-        ObserveCommandErrors(ShowDownloadsCommand, "切换页面失败");
-        ObserveCommandErrors(ShowHistoryCommand, "切换页面失败");
-        ObserveCommandErrors(FilterDownloadingCommand, "筛选任务失败");
-        ObserveCommandErrors(FilterCompletedCommand, "筛选任务失败");
-        ObserveCommandErrors(FilterQueuedCommand, "筛选任务失败");
-        ObserveCommandErrors(FilterAllCommand, "筛选任务失败");
-        ObserveCommandErrors(PasteClipboardCommand, "读取剪贴板失败");
-        ObserveCommandErrors(BrowseDirectoryCommand, "选择保存目录失败");
-        ObserveCommandErrors(ResolveCommand, "解析任务失败");
-        ObserveCommandErrors(RetryItemCommand, "重试任务失败");
-        ObserveCommandErrors(CopyHistoryUrlCommand, "复制视频地址失败");
     }
 
     public ObservableCollection<DownloadItem> Items { get; } = [];
@@ -223,7 +214,6 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
     public ObservableCollection<HistoryItem> HistoryItems { get; } = [];
     public IReadOnlyList<string> Qualities { get; } = ["1080P", "720P", "540P", "360P"];
     public IReadOnlyList<int> ConcurrencyOptions { get; } = [1, 2, 3, 4, 6, 8];
-    public IReadOnlyList<int> DownloadThreadOptions { get; } = [1, 2, 4, 8, 16];
     public string InputText { get => _inputText; set { if (SetField(ref _inputText, value)) OnPropertyChanged(nameof(RecognizedCount)); } }
     public int RecognizedCount => DownloaderUtils.ExtractVids(InputText).Count;
     public string SelectedQuality
@@ -247,17 +237,6 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
             ShowToast($"同时下载数已设为 {_selectedConcurrency}");
         }
     }
-    public int SelectedDownloadThreads
-    {
-        get => _selectedDownloadThreads;
-        set
-        {
-            var threads = DownloadThreadOptions.Contains(value) ? value : 2;
-            if (!SetField(ref _selectedDownloadThreads, threads)) return;
-            SaveSettings();
-            ShowToast($"下载线程已设为 {threads}");
-        }
-    }
     public string DownloadDirectory
     {
         get => _downloadDirectory;
@@ -270,8 +249,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
     }
     public string SearchText { get => _searchText; set { if (SetField(ref _searchText, value)) Refresh(); } }
     public string StatusMessage { get => _statusMessage; private set => SetField(ref _statusMessage, value); }
-    public string ToastMessage { get => _toastMessage; private set => SetField(ref _toastMessage, value); }
-    public bool IsToastVisible { get => _isToastVisible; private set => SetField(ref _isToastVisible, value); }
+    public event Action<string>? ToastRequested;
     public bool IsDownloadPage => Page == DownloadsPage;
     public bool IsHistoryPage => Page == HistoryPage;
     public bool IsDownloadsSelected => IsDownloadPage;
@@ -287,10 +265,31 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         {
             foreach (var item in Items) item.IsSelected = value;
             OnPropertyChanged(nameof(IsAllTasksSelected));
+            OnPropertyChanged(nameof(IsAllTasksSelectedNullable));
         }
     }
+    public bool? IsAllTasksSelectedNullable
+    {
+        get => Items.Count == 0 ? false : Items.All(item => item.IsSelected) ? true : Items.Any(item => item.IsSelected) ? null : false;
+        set => IsAllTasksSelected = value == true;
+    }
     public string AppVersion => $"v{typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString(3)}";
+    public bool IsDarkTheme => _isDarkTheme;
     public string AllTaskLabel => $"全部 {Items.Count}";
+    public Color NavBackground => IsDownloadPage ? ThemePalette.AccentSoft : ThemePalette.Transparent;
+    public Color NavForeground => IsDownloadPage ? ThemePalette.Accent : ThemePalette.TextSecondary;
+    public Color DownloadsBackground => IsDownloadPage ? ThemePalette.AccentSoft : ThemePalette.Transparent;
+    public Color DownloadsForeground => IsDownloadPage ? ThemePalette.Accent : ThemePalette.TextSecondary;
+    public Color HistoryBackground => IsHistoryPage ? ThemePalette.AccentSoft : ThemePalette.Transparent;
+    public Color HistoryForeground => IsHistoryPage ? ThemePalette.Accent : ThemePalette.TextSecondary;
+    public Color AllFilterBackground => IsAllFilterSelected ? ThemePalette.AccentSoft : ThemePalette.Transparent;
+    public Color AllFilterForeground => IsAllFilterSelected ? ThemePalette.Accent : ThemePalette.TextSecondary;
+    public Color DownloadingFilterBackground => IsDownloadingFilterSelected ? ThemePalette.AccentSoft : ThemePalette.Transparent;
+    public Color DownloadingFilterForeground => IsDownloadingFilterSelected ? ThemePalette.Accent : ThemePalette.TextSecondary;
+    public Color CompletedFilterBackground => IsCompletedFilterSelected ? ThemePalette.AccentSoft : ThemePalette.Transparent;
+    public Color CompletedFilterForeground => IsCompletedFilterSelected ? ThemePalette.Accent : ThemePalette.TextSecondary;
+    public Color QueuedFilterBackground => IsQueuedFilterSelected ? ThemePalette.AccentSoft : ThemePalette.Transparent;
+    public Color QueuedFilterForeground => IsQueuedFilterSelected ? ThemePalette.Accent : ThemePalette.TextSecondary;
     public string TaskSummary
     {
         get
@@ -305,33 +304,99 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
     public string DiskFreeLabel => GetFreeSpaceLabel();
     public string WorkerPoolLabel { get { lock (_activeLock) return $"活动 {_activeDownloads.Count} / 同时 {SelectedConcurrency}"; } }
 
-    public ReactiveCommand<RxVoid, RxVoid> ShowDownloadsCommand { get; }
-    public ReactiveCommand<RxVoid, RxVoid> ShowHistoryCommand { get; }
-    public ReactiveCommand<RxVoid, RxVoid> OpenGithubCommand { get; }
-    public ReactiveCommand<RxVoid, RxVoid> PasteClipboardCommand { get; }
-    public ReactiveCommand<RxVoid, RxVoid> ClearInputCommand { get; }
-    public ReactiveCommand<RxVoid, RxVoid> BrowseDirectoryCommand { get; }
-    public ReactiveCommand<RxVoid, RxVoid> ResolveCommand { get; }
-    public ReactiveCommand<RxVoid, RxVoid> DeleteSelectedCommand { get; }
-    public ReactiveCommand<RxVoid, RxVoid> PauseAllCommand { get; }
-    public ReactiveCommand<RxVoid, RxVoid> StartAllCommand { get; }
-    public ReactiveCommand<RxVoid, RxVoid> FilterDownloadingCommand { get; }
-    public ReactiveCommand<RxVoid, RxVoid> FilterCompletedCommand { get; }
-    public ReactiveCommand<RxVoid, RxVoid> FilterQueuedCommand { get; }
-    public ReactiveCommand<RxVoid, RxVoid> FilterAllCommand { get; }
-    public ReactiveCommand<RxVoid, RxVoid> RefreshCommand { get; }
-    public ReactiveCommand<DownloadItem, RxVoid> PauseItemCommand { get; }
-    public ReactiveCommand<DownloadItem, RxVoid> ResumeItemCommand { get; }
-    public ReactiveCommand<DownloadItem, RxVoid> RetryItemCommand { get; }
-    public ReactiveCommand<DownloadItem, RxVoid> CancelItemCommand { get; }
-    public ReactiveCommand<DownloadItem, RxVoid> PlayItemCommand { get; }
-    public ReactiveCommand<DownloadItem, RxVoid> OpenItemDirectoryCommand { get; }
-    public ReactiveCommand<HistoryItem, RxVoid> CopyHistoryUrlCommand { get; }
-    public ReactiveCommand<HistoryItem, RxVoid> OpenHistoryDirectoryCommand { get; }
+    public void ShowDownloads() => Page = DownloadsPage;
+    public void ShowHistory() => Page = HistoryPage;
+    public void OpenGithub() => _platform.OpenPath("https://github.com/SwaggyMacro/TangdouDownloader");
+    public void ClearInput() => InputText = string.Empty;
+    public void StartAll() => StartAllInBackground();
+    public void FilterDownloading() => SetFilter("下载中");
+    public void FilterCompleted() => SetFilter("已完成");
+    public void FilterQueued() => SetFilter("排队中");
+    public void FilterAll() => SetFilter("全部");
+    public void PlayItem(DownloadItem item) { if (item.CanOpenFile) _platform.OpenPath(item.FilePath!); }
+    public void OpenItemDirectory(DownloadItem item) { if (item.FilePath is not null) _platform.OpenPath(Path.GetDirectoryName(item.FilePath)!); }
+    public void OpenHistoryDirectory(HistoryItem item)
+    {
+        var directory = Path.GetDirectoryName(item.FilePath);
+        if (!string.IsNullOrWhiteSpace(directory)) _platform.OpenPath(directory);
+    }
 
-    public void ConfigurePlatformServices(IWorkspacePlatform platform)
+    public async void PasteClipboard()
+    {
+        try { await PasteClipboardAsync(); }
+        catch (Exception exception) { ShowToast($"读取剪贴板失败: {DescribeFailure(exception)}"); }
+    }
+
+    public async void BrowseDirectory()
+    {
+        try { await BrowseDirectoryAsync(); }
+        catch (Exception exception) { ShowToast($"选择目录失败: {DescribeFailure(exception)}"); }
+    }
+
+    public async void ResolveAndQueue()
+    {
+        try { await ResolveAndQueueAsync(); }
+        catch (Exception exception) { ShowToast($"加入队列失败: {DescribeFailure(exception)}"); }
+    }
+
+    public void RefreshTasks() => Refresh();
+
+    public async void PauseAll()
+    {
+        try { await PauseAllAsync(); }
+        catch (Exception exception) { ShowToast($"暂停失败: {DescribeFailure(exception)}"); }
+    }
+
+    public async void PauseItem(DownloadItem? item)
+    {
+        try { await PauseItemAsync(item); }
+        catch (Exception exception) { ShowToast($"暂停失败: {DescribeFailure(exception)}"); }
+    }
+
+    public async void ResumeItem(DownloadItem? item)
+    {
+        try { await ResumeItemAsync(item); }
+        catch (Exception exception) { ShowToast($"继续下载失败: {DescribeFailure(exception)}"); }
+    }
+
+    public async void RetryItem(DownloadItem? item)
+    {
+        try { await RetryItemAsync(item); }
+        catch (Exception exception) { ShowToast($"重试失败: {DescribeFailure(exception)}"); }
+    }
+
+    public async void CancelItem(DownloadItem? item)
+    {
+        try { await CancelItemAsync(item); }
+        catch (Exception exception) { ShowToast($"取消任务失败: {DescribeFailure(exception)}"); }
+    }
+
+    public async void DeleteSelected()
+    {
+        try { await DeleteSelectedAsync(); }
+        catch (Exception exception) { ShowToast($"删除任务失败: {DescribeFailure(exception)}"); }
+    }
+
+    public async void CopyHistoryUrl(HistoryItem? item)
+    {
+        try { await CopyHistoryUrlAsync(item); }
+        catch (Exception exception) { ShowToast($"复制地址失败: {DescribeFailure(exception)}"); }
+    }
+
+    public void ToggleTheme()
+    {
+        _isDarkTheme = !_isDarkTheme;
+        OnPropertyChanged(nameof(IsDarkTheme));
+        _platform.SetTheme(_isDarkTheme);
+        SaveSettings();
+        ShowToast(_isDarkTheme ? "已切换到深色主题" : "已切换到浅色主题");
+    }
+
+    public void ConfigurePlatformServices(IWorkspacePlatform platform, Window? owner = null)
     {
         _platform = platform;
+        _owner = owner;
+        _uiContext = SynchronizationContext.Current;
         _platform.SetTheme(_isDarkTheme);
     }
 
@@ -339,6 +404,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
     {
         if (_isDarkTheme == isDarkTheme) return;
         _isDarkTheme = isDarkTheme;
+        OnPropertyChanged(nameof(IsDarkTheme));
         SaveSettings();
     }
 
@@ -350,6 +416,12 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
             if (!SetField(ref _page, value)) return;
             OnPropertyChanged(nameof(IsDownloadPage));
             OnPropertyChanged(nameof(IsHistoryPage));
+            OnPropertyChanged(nameof(NavBackground));
+            OnPropertyChanged(nameof(NavForeground));
+            OnPropertyChanged(nameof(DownloadsBackground));
+            OnPropertyChanged(nameof(DownloadsForeground));
+            OnPropertyChanged(nameof(HistoryBackground));
+            OnPropertyChanged(nameof(HistoryForeground));
             OnPropertyChanged(nameof(IsDownloadsSelected));
             OnPropertyChanged(nameof(IsHistorySelected));
         }
@@ -372,7 +444,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
 
     private async Task BrowseDirectoryAsync()
     {
-        var selected = await _platform.PickDownloadDirectoryAsync();
+        var selected = await _platform.PickDownloadDirectoryAsync(_owner);
         if (!string.IsNullOrWhiteSpace(selected))
             await OnUiAsync(() =>
             {
@@ -465,6 +537,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
                 item.Title = info.Title;
                 item.Url = url;
                 item.CoverUrl = info.CoverUrl;
+                item.TotalBytes = info.SelectSize(item.Quality);
                 item.Status = "排队中";
             });
             if (item.Status != "已取消" && !string.IsNullOrWhiteSpace(info.CoverUrl))
@@ -476,6 +549,14 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
             {
                 item.Status = "已取消";
                 item.RemainingTime = "解析已取消";
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            await OnUiAsync(() =>
+            {
+                item.Status = "已暂停";
+                item.RemainingTime = "解析已暂停";
             });
         }
         catch (Exception exception)
@@ -499,17 +580,16 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         var queue = Items.Where(item => item.Status is "排队中" or "已暂停").ToList();
         var directory = DownloadDirectory;
         var concurrency = SelectedConcurrency;
-        var downloadThreads = SelectedDownloadThreads;
         if (queue.Count == 0)
         {
             ShowToast("没有可开始的任务");
             return;
         }
-        ShowToast($"开始下载 {queue.Count} 项任务，每项 {downloadThreads} 线程");
-        _ = Task.Run(() => StartAllAsync(queue, directory, concurrency, downloadThreads));
+        ShowToast($"开始下载 {queue.Count} 项任务");
+        _ = Task.Run(() => StartAllAsync(queue, directory, concurrency));
     }
 
-    private async Task StartAllAsync(IReadOnlyList<DownloadItem> queue, string directory, int concurrency, int downloadThreads)
+    private async Task StartAllAsync(IReadOnlyList<DownloadItem> queue, string directory, int concurrency)
     {
         try
         {
@@ -519,7 +599,11 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
             await Task.WhenAll(queue.Select(async item =>
             {
                 await gate.WaitAsync(_lifetime.Token);
-                try { await DownloadItemAsync(item, directory, downloadThreads); }
+                try
+                {
+                    var itemThreads = item.Status == "已暂停" ? item.DownloadThreads : 1;
+                    await DownloadItemAsync(item, directory, itemThreads);
+                }
                 finally { gate.Release(); }
             }));
             await OnUiAsync(() =>
@@ -539,10 +623,9 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
     private async Task ResumeItemAsync(DownloadItem? item)
     {
         if (item is null || !item.CanResume) return;
-        var downloadThreads = SelectedDownloadThreads;
         await WaitUntilInactiveAsync(item);
         await OnUiAsync(() => ShowToast($"继续下载: {item.Title}"));
-        await DownloadItemAsync(item, DownloadDirectory, downloadThreads);
+        await DownloadItemAsync(item, DownloadDirectory, item.DownloadThreads);
     }
 
     private async Task RetryItemAsync(DownloadItem? item)
@@ -567,7 +650,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
 
         if (item.Status != "排队中" || string.IsNullOrWhiteSpace(item.Url)) return;
         await OnUiAsync(() => ShowToast($"已重新解析，开始下载: {item.Title}"));
-        await DownloadItemAsync(item, DownloadDirectory, SelectedDownloadThreads);
+        await DownloadItemAsync(item, DownloadDirectory);
     }
 
     private async Task WaitUntilInactiveAsync(DownloadItem item)
@@ -582,13 +665,14 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         }
     }
 
-    private async Task DownloadItemAsync(DownloadItem item, string directory, int downloadThreads)
+    private async Task DownloadItemAsync(DownloadItem item, string directory, int downloadThreads = 1)
     {
         lock (_activeLock)
         {
             if (_activeDownloads.ContainsKey(item)) return;
         }
 
+        item.DownloadThreads = downloadThreads;
         var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         lock (_activeLock) _activeDownloads[item] = cancellation;
         await OnUiAsync(() =>
@@ -614,7 +698,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
                 if (value.Percentage >= 100 || now - Interlocked.Read(ref lastProgressTick) >= 120)
                 {
                     Interlocked.Exchange(ref lastProgressTick, now);
-                    Dispatcher.UIThread.Post(() => ApplyProgress(item, value));
+                    PostToUi(() => ApplyProgress(item, value));
                 }
             });
             var result = await _downloader.DownloadAsync(
@@ -623,9 +707,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
                 directory,
                 progress,
                 cancellation.Token,
-                downloadThreads,
-                () => Dispatcher.UIThread.Post(() =>
-                    ShowToast($"服务器不支持多线程，{item.Title} 将改用单线程下载")));
+                downloadThreads);
             await OnUiAsync(() =>
             {
                 item.FilePath = result.FilePath;
@@ -636,9 +718,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
                 item.RemainingTime = "已完成";
                 item.Status = "已完成";
                 AddHistory(item);
-                ShowToast(result.UsedSingleThreadFallback
-                    ? $"已完成: {item.Title}（服务器不支持多线程，已改用单线程）"
-                    : $"已完成: {item.Title}");
+                ShowToast($"已完成: {item.Title}");
             });
         }
         catch (OperationCanceledException)
@@ -719,17 +799,16 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         }
     }
 
-    private static async Task LoadCoverAsync(DownloadItem item, string url, CancellationToken cancellationToken)
+    private async Task LoadCoverAsync(DownloadItem item, string url, CancellationToken cancellationToken)
     {
         try
         {
             using var request = TangdouVideoService.CreateRequest(HttpMethod.Get, url);
-            request.Headers.TryAddWithoutValidation("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8");
+            request.Headers.TryAddWithoutValidation("Accept", "image/png,image/jpeg,image/*;q=0.8,*/*;q=0.5");
             using var response = await CoverClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             response.EnsureSuccessStatusCode();
             var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
-            await using var stream = new MemoryStream(bytes, writable: false);
-            var bitmap = new Bitmap(stream);
+            var bitmap = CreateRoundedThumbnail(TryCreateImageSource(bytes));
             await OnUiAsync(() => item.CoverImage = bitmap);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -836,9 +915,9 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
     }
     private void Refresh()
     {
-        if (!Dispatcher.UIThread.CheckAccess())
+        if (!ReferenceEquals(SynchronizationContext.Current, _uiContext))
         {
-            Dispatcher.UIThread.Post(Refresh);
+            PostToUi(Refresh);
             return;
         }
 
@@ -849,6 +928,14 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         OnPropertyChanged(nameof(IsDownloadingFilterSelected));
         OnPropertyChanged(nameof(IsCompletedFilterSelected));
         OnPropertyChanged(nameof(IsQueuedFilterSelected));
+        OnPropertyChanged(nameof(AllFilterBackground));
+        OnPropertyChanged(nameof(AllFilterForeground));
+        OnPropertyChanged(nameof(DownloadingFilterBackground));
+        OnPropertyChanged(nameof(DownloadingFilterForeground));
+        OnPropertyChanged(nameof(CompletedFilterBackground));
+        OnPropertyChanged(nameof(CompletedFilterForeground));
+        OnPropertyChanged(nameof(QueuedFilterBackground));
+        OnPropertyChanged(nameof(QueuedFilterForeground));
         OnPropertyChanged(nameof(TotalSpeedLabel));
         OnPropertyChanged(nameof(DiskFreeLabel));
         OnPropertyChanged(nameof(WorkerPoolLabel));
@@ -860,6 +947,106 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         var originalUrl = string.IsNullOrWhiteSpace(item.OriginalUrl) ? item.Vid : item.OriginalUrl;
         HistoryItems.Insert(0, new HistoryItem(item.Title, item.Vid, item.Quality, item.FilePath, item.BytesReceived, DateTimeOffset.Now, originalUrl));
         PersistHistory();
+    }
+
+    private static ImageSource? TryCreateImageSource(byte[] bytes)
+    {
+        if (bytes.Length > 8 && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47)
+            return ImageSource.FromBytes(bytes);
+        if (bytes.Length > 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF)
+            return ImageSource.FromBytes(bytes);
+        if (bytes.Length > 2 && bytes[0] == 0x42 && bytes[1] == 0x4D)
+            return ImageSource.FromBytes(bytes);
+
+        if (ImageConversion.TryDecodeWebPToBmp(bytes, out var bmp))
+            return ImageSource.FromBytes(bmp);
+        return null;
+    }
+
+    private static ImageSource? CreateRoundedThumbnail(ImageSource? source)
+    {
+        if (source is null) return null;
+
+        try
+        {
+            var sourceWidth = source.PixelWidth;
+            var sourceHeight = source.PixelHeight;
+            if (sourceWidth <= 0 || sourceHeight <= 0) return null;
+
+            var sourcePixels = new byte[checked(sourceWidth * sourceHeight * 4)];
+            source.CopyPixels(sourcePixels, sourceWidth * 4);
+
+            var result = new byte[CoverThumbnailWidth * CoverThumbnailHeight * 4];
+            var scale = Math.Max(
+                CoverThumbnailWidth / (double)sourceWidth,
+                CoverThumbnailHeight / (double)sourceHeight);
+            var cropWidth = CoverThumbnailWidth / scale;
+            var cropHeight = CoverThumbnailHeight / scale;
+            var cropLeft = (sourceWidth - cropWidth) / 2;
+            var cropTop = (sourceHeight - cropHeight) / 2;
+
+            for (var y = 0; y < CoverThumbnailHeight; y++)
+            {
+                var sourceY = cropTop + ((y + 0.5) * cropHeight / CoverThumbnailHeight) - 0.5;
+                for (var x = 0; x < CoverThumbnailWidth; x++)
+                {
+                    var sourceX = cropLeft + ((x + 0.5) * cropWidth / CoverThumbnailWidth) - 0.5;
+                    var destinationOffset = (y * CoverThumbnailWidth + x) * 4;
+                    SampleBilinear(sourcePixels, sourceWidth, sourceHeight, sourceX, sourceY, result, destinationOffset);
+                    result[destinationOffset + 3] = (byte)(result[destinationOffset + 3] * RoundedCornerCoverage(x, y));
+                }
+            }
+
+            return ImageSource.FromBgraPixels(CoverThumbnailWidth, CoverThumbnailHeight, result, hasAlpha: true);
+        }
+        catch (Exception)
+        {
+            return source;
+        }
+    }
+
+    private static void SampleBilinear(
+        byte[] source,
+        int sourceWidth,
+        int sourceHeight,
+        double sourceX,
+        double sourceY,
+        byte[] destination,
+        int destinationOffset)
+    {
+        var left = Math.Clamp((int)Math.Floor(sourceX), 0, sourceWidth - 1);
+        var top = Math.Clamp((int)Math.Floor(sourceY), 0, sourceHeight - 1);
+        var right = Math.Min(left + 1, sourceWidth - 1);
+        var bottom = Math.Min(top + 1, sourceHeight - 1);
+        var horizontal = Math.Clamp(sourceX - left, 0, 1);
+        var vertical = Math.Clamp(sourceY - top, 0, 1);
+
+        for (var channel = 0; channel < 4; channel++)
+        {
+            var topValue = source[(top * sourceWidth + left) * 4 + channel] * (1 - horizontal) +
+                           source[(top * sourceWidth + right) * 4 + channel] * horizontal;
+            var bottomValue = source[(bottom * sourceWidth + left) * 4 + channel] * (1 - horizontal) +
+                              source[(bottom * sourceWidth + right) * 4 + channel] * horizontal;
+            destination[destinationOffset + channel] = (byte)Math.Round(topValue * (1 - vertical) + bottomValue * vertical);
+        }
+    }
+
+    private static double RoundedCornerCoverage(int x, int y)
+    {
+        var pixelX = x + 0.5;
+        var pixelY = y + 0.5;
+        var cornerX = pixelX < CoverThumbnailCornerRadius
+            ? CoverThumbnailCornerRadius
+            : pixelX > CoverThumbnailWidth - CoverThumbnailCornerRadius
+                ? CoverThumbnailWidth - CoverThumbnailCornerRadius
+                : pixelX;
+        var cornerY = pixelY < CoverThumbnailCornerRadius
+            ? CoverThumbnailCornerRadius
+            : pixelY > CoverThumbnailHeight - CoverThumbnailCornerRadius
+                ? CoverThumbnailHeight - CoverThumbnailCornerRadius
+                : pixelY;
+        var distance = Math.Sqrt(Math.Pow(pixelX - cornerX, 2) + Math.Pow(pixelY - cornerY, 2));
+        return Math.Clamp(CoverThumbnailCornerRadius + 0.5 - distance, 0, 1);
     }
 
     private static Dictionary<string, string> BuildOriginalUrls(string input)
@@ -881,53 +1068,35 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         return string.IsNullOrWhiteSpace(message) ? "请求未成功完成" : message;
     }
 
-    private static async Task OnUiAsync(Action action)
+    private async Task OnUiAsync(Action action)
     {
-        if (Dispatcher.UIThread.CheckAccess())
+        if (ReferenceEquals(SynchronizationContext.Current, _uiContext) || _uiContext is null)
         {
             action();
             return;
         }
 
-        await Dispatcher.UIThread.InvokeAsync(action);
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _uiContext.Post(_ =>
+        {
+            try { action(); completion.SetResult(); }
+            catch (Exception exception) { completion.SetException(exception); }
+        }, null);
+        await completion.Task;
     }
 
     private void ShowToast(string message)
     {
         StatusMessage = message;
-        ToastMessage = message;
-        IsToastVisible = true;
-        var generation = ++_toastGeneration;
-        _ = HideToastAfterDelayAsync(generation);
+        ToastRequested?.Invoke(message);
     }
 
-    private async Task HideToastAfterDelayAsync(int generation)
+    private void PostToUi(Action action)
     {
-        try
-        {
-            await Task.Delay(TimeSpan.FromSeconds(3), _lifetime.Token);
-            await OnUiAsync(() =>
-            {
-                if (generation == _toastGeneration) IsToastVisible = false;
-            });
-        }
-        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
-        {
-        }
-    }
-
-    private void ObserveCommandErrors(IHandleObservableErrors command, string operation)
-    {
-        command.ThrownExceptions.Subscribe(new CommandErrorObserver(exception =>
-            Dispatcher.UIThread.Post(() =>
-                ShowToast($"{operation}: {DescribeFailure(exception)}"))));
-    }
-
-    private sealed class CommandErrorObserver(Action<Exception> onNext) : IObserver<Exception>
-    {
-        public void OnCompleted() { }
-        public void OnError(Exception error) => onNext(error);
-        public void OnNext(Exception value) => onNext(value);
+        if (ReferenceEquals(SynchronizationContext.Current, _uiContext) || _uiContext is null)
+            action();
+        else
+            _uiContext.Post(_ => action(), null);
     }
 
     private void LoadState()
@@ -937,7 +1106,6 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         {
             _selectedQuality = Qualities.Contains(settings.Quality) ? settings.Quality : _selectedQuality;
             _selectedConcurrency = ConcurrencyOptions.Contains(settings.Concurrency) ? settings.Concurrency : _selectedConcurrency;
-            _selectedDownloadThreads = DownloadThreadOptions.Contains(settings.DownloadThreads) ? settings.DownloadThreads : _selectedDownloadThreads;
             _downloadDirectory = string.IsNullOrWhiteSpace(settings.DownloadDirectory) ? _downloadDirectory : settings.DownloadDirectory;
             _isDarkTheme = settings.IsDarkTheme;
         }
@@ -946,7 +1114,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
 
     private void SaveSettings()
     {
-        try { _stateStore.SaveSettings(new WorkspaceSettings(SelectedQuality, SelectedConcurrency, DownloadDirectory, _isDarkTheme, SelectedDownloadThreads)); }
+        try { _stateStore.SaveSettings(new WorkspaceSettings(SelectedQuality, SelectedConcurrency, DownloadDirectory, _isDarkTheme)); }
         catch (Exception) { ShowToast("设置保存失败"); }
     }
 
@@ -978,7 +1146,8 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
                             OnPropertyChanged(nameof(TaskSummary));
                             OnPropertyChanged(nameof(WorkerPoolLabel));
                             // Replacing ItemsSource while a download is running makes
-                            // Avalonia DataGrid restore its scroll position to the top.
+                            // Replacing ItemsSource while a download is running can
+                            // restore a grid's scroll position to the top.
                             // Only filtered views need a new projection on status changes.
                             if (_filter != "全部") Refresh();
                             break;
@@ -988,6 +1157,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
                             break;
                         case nameof(DownloadItem.IsSelected):
                             OnPropertyChanged(nameof(IsAllTasksSelected));
+                            OnPropertyChanged(nameof(IsAllTasksSelectedNullable));
                             break;
                         case nameof(DownloadItem.SpeedBytesPerSecond):
                             OnPropertyChanged(nameof(TotalSpeedLabel));
@@ -1008,8 +1178,12 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? name = null)
     {
         if (EqualityComparer<T>.Default.Equals(field, value)) return false;
-        this.RaiseAndSetIfChanged(ref field, value, name);
+        field = value;
+        OnPropertyChanged(name);
         return true;
     }
-    private void OnPropertyChanged([CallerMemberName] string? name = null) => this.RaisePropertyChanged(name);
+    private void OnPropertyChanged([CallerMemberName] string? name = null) =>
+        PropertyChanged?.Invoke(this, new(name));
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 }

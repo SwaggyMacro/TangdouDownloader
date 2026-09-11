@@ -1,0 +1,685 @@
+using Aprillz.MewUI.Animation;
+using Aprillz.MewUI.Rendering;
+using Aprillz.MewUI.Resources;
+
+namespace Aprillz.MewUI.Controls;
+
+/// <summary>
+/// An image display control with scaling and alignment options.
+/// </summary>
+public sealed partial class Image : FrameworkElement
+{
+    public static readonly MewProperty<ImageScaleQuality> ImageScaleQualityProperty =
+        MewProperty<ImageScaleQuality>.Register<Image>(nameof(ImageScaleQuality), ImageScaleQuality.Default, MewPropertyOptions.AffectsRender);
+
+    public static readonly MewProperty<Stretch> StretchModeProperty =
+        MewProperty<Stretch>.Register<Image>(nameof(StretchMode), Stretch.Uniform, MewPropertyOptions.AffectsLayout);
+
+    public static readonly MewProperty<Rect?> ViewBoxProperty =
+        MewProperty<Rect?>.Register<Image>(nameof(ViewBox), null, MewPropertyOptions.AffectsLayout);
+
+    public static readonly MewProperty<ImageViewBoxUnits> ViewBoxUnitsProperty =
+        MewProperty<ImageViewBoxUnits>.Register<Image>(nameof(ViewBoxUnits), ImageViewBoxUnits.Pixels, MewPropertyOptions.AffectsLayout);
+
+    public static readonly MewProperty<ImageAlignmentX> AlignmentXProperty =
+        MewProperty<ImageAlignmentX>.Register<Image>(nameof(AlignmentX), ImageAlignmentX.Center, MewPropertyOptions.AffectsRender);
+
+    public static readonly MewProperty<ImageAlignmentY> AlignmentYProperty =
+        MewProperty<ImageAlignmentY>.Register<Image>(nameof(AlignmentY), ImageAlignmentY.Center, MewPropertyOptions.AffectsRender);
+
+    public static readonly MewProperty<IImageSource?> SourceProperty =
+        MewProperty<IImageSource?>.Register<Image>(nameof(Source), null,
+            MewPropertyOptions.AffectsLayout | MewPropertyOptions.AffectsRender,
+            static (self, oldValue, newValue) => self.OnSourcePropertyChanged(oldValue, newValue));
+
+    public static readonly MewProperty<ImageVectorCacheMode> VectorCacheModeProperty =
+        MewProperty<ImageVectorCacheMode>.Register<Image>(nameof(VectorCacheMode), ImageVectorCacheMode.Cached,
+            MewPropertyOptions.AffectsRender,
+            static (self, _, _) => self.ClearVectorCache());
+
+    public static readonly MewProperty<ImageOrientationMode> OrientationModeProperty =
+        MewProperty<ImageOrientationMode>.Register<Image>(nameof(OrientationMode), ImageOrientationMode.FromImage,
+            MewPropertyOptions.AffectsLayout | MewPropertyOptions.AffectsRender);
+
+    // A control renders through a single graphics factory (registered once at startup), so one cached
+    // backend image suffices. The factory is tracked only to defensively rebuild if it ever changes.
+    private IImage? _cachedImage;
+    private IGraphicsFactory? _cachedFactory;
+    private double _cachedRasterScale;
+
+    private INotifyImageChanged? _notifySource;
+
+    /// <summary>
+    /// Gets or sets the image scaling quality.
+    /// </summary>
+    public ImageScaleQuality ImageScaleQuality
+    {
+        get => GetValue(ImageScaleQualityProperty);
+        set => SetValue(ImageScaleQualityProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets how the image is stretched to fill available space.
+    /// </summary>
+    public Stretch StretchMode
+    {
+        get => GetValue(StretchModeProperty);
+        set => SetValue(StretchModeProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the viewbox region of the source image.
+    /// </summary>
+    public Rect? ViewBox
+    {
+        get => GetValue(ViewBoxProperty);
+        set => SetValue(ViewBoxProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the units for the viewbox coordinates.
+    /// </summary>
+    public ImageViewBoxUnits ViewBoxUnits
+    {
+        get => GetValue(ViewBoxUnitsProperty);
+        set => SetValue(ViewBoxUnitsProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the horizontal alignment of the image.
+    /// </summary>
+    public ImageAlignmentX AlignmentX
+    {
+        get => GetValue(AlignmentXProperty);
+        set => SetValue(AlignmentXProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the vertical alignment of the image.
+    /// </summary>
+    public ImageAlignmentY AlignmentY
+    {
+        get => GetValue(AlignmentYProperty);
+        set => SetValue(AlignmentYProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the image source.
+    /// </summary>
+    public IImageSource? Source
+    {
+        get => GetValue(SourceProperty);
+        set => SetValue(SourceProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets whether the source's orientation (e.g. JPEG EXIF) is applied. Defaults to
+    /// <see cref="ImageOrientationMode.FromImage"/> (upright); <see cref="ImageOrientationMode.Ignore"/>
+    /// shows the raw decoded pixels.
+    /// </summary>
+    public ImageOrientationMode OrientationMode
+    {
+        get => GetValue(OrientationModeProperty);
+        set => SetValue(OrientationModeProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets how a vector source is rendered. Defaults to
+    /// <see cref="ImageVectorCacheMode.Cached"/>.
+    /// </summary>
+    public ImageVectorCacheMode VectorCacheMode
+    {
+        get => GetValue(VectorCacheModeProperty);
+        set => SetValue(VectorCacheModeProperty, value);
+    }
+
+    // Effective orientation to apply: Normal unless the mode is FromImage and the source carries one.
+    // Read after GetImage() so the source has been decoded and its orientation resolved.
+    private ImageOrientation GetEffectiveOrientation() =>
+        OrientationMode == ImageOrientationMode.Ignore || Source is not IOrientedImageSource oriented
+            ? ImageOrientation.Normal
+            : OrientationTransform.Normalize(oriented.Orientation);
+
+    private void OnSourcePropertyChanged(IImageSource? _, IImageSource? newValue)
+    {
+        if (_notifySource != null)
+        {
+            _notifySource.Changed -= OnSourceChanged;
+            _notifySource = null;
+        }
+
+        _notifySource = newValue as INotifyImageChanged;
+        if (_notifySource != null)
+        {
+            _notifySource.Changed += OnSourceChanged;
+        }
+
+        ClearCache();
+        // A vector source keeps its surface for reuse (just mark content stale, e.g. a virtualized tile
+        // rebinding); any other (raster/null) source no longer needs the vector surface, so release it.
+        if (newValue is IVectorImageSource)
+        {
+            InvalidateVectorContent();
+        }
+        else
+        {
+            ClearVectorCache();
+        }
+    }
+
+    /// <summary>
+    /// Tries to read the source pixel color at the given position (local DIPs).
+    /// </summary>
+    /// <remarks>
+    /// This reads pixels from the decoded <see cref="ImageSource"/> data (BGRA32) and maps the position through
+    /// <see cref="ViewBox"/>, <see cref="StretchMode"/>, and alignment. Returns <see langword="false"/> if the source
+    /// is not an <see cref="ImageSource"/>, decoding fails, or the position maps outside the source.
+    /// </remarks>
+    public bool TryPeekColor(Point positionDip, out Color color)
+    {
+        color = default;
+        if (Source is not ImageSource imageSource)
+        {
+            return false;
+        }
+
+        // Do not decode in this method. Decoding happens when the source is first used for rendering
+        // (ImageSource.CreateImage caches the decoded pixel buffer). If the source hasn't been used
+        // yet, simply return false.
+        if (!imageSource.TryGetBgra32PixelBuffer(out var decoded))
+        {
+            return false;
+        }
+
+        if (!imageSource.TryGetMetadata(out var metadata))
+        {
+            return false;
+        }
+
+        var orientation = OrientationMode == ImageOrientationMode.Ignore
+            ? ImageOrientation.Normal
+            : OrientationTransform.Normalize(metadata.Orientation);
+        var intrinsicOrientedSize = OrientationTransform.GetOrientedSize(
+            orientation,
+            metadata.PixelWidth,
+            metadata.PixelHeight);
+        var srcRect = GetViewBoxPixels((int)intrinsicOrientedSize.Width, (int)intrinsicOrientedSize.Height);
+        if (srcRect.Width <= 0 || srcRect.Height <= 0)
+        {
+            return false;
+        }
+
+        ComputeRects(srcRect, new(0, 0, ActualWidth, ActualHeight), StretchMode, AlignmentX, AlignmentY, out var dest, out var src);
+        if (dest.Width <= 0 || dest.Height <= 0 || src.Width <= 0 || src.Height <= 0)
+        {
+            return false;
+        }
+
+        // Position is window-relative, same coordinate space as Bounds/dest.
+        if (!dest.Contains(positionDip))
+        {
+            return false;
+        }
+
+        double u = (positionDip.X - dest.X) / dest.Width;
+        double v = (positionDip.Y - dest.Y) / dest.Height;
+
+        var intrinsicOrientedPoint = new Point(src.X + u * src.Width, src.Y + v * src.Height);
+        var intrinsicRawPoint = OrientationTransform.OrientedToRaw(
+            orientation,
+            metadata.PixelWidth,
+            metadata.PixelHeight,
+            intrinsicOrientedPoint);
+        int px = (int)Math.Floor(intrinsicRawPoint.X * decoded.WidthPx / metadata.PixelWidth);
+        int py = (int)Math.Floor(intrinsicRawPoint.Y * decoded.HeightPx / metadata.PixelHeight);
+
+        if ((uint)px >= (uint)decoded.WidthPx || (uint)py >= (uint)decoded.HeightPx)
+        {
+            return false;
+        }
+
+        int index = py * decoded.StrideBytes + px * 4 + 3; // BGRA
+        if ((uint)index >= (uint)decoded.Data.Length)
+        {
+            return false;
+        }
+
+        var data = decoded.Data;
+        byte b = data[index - 3];
+        byte g = data[index - 2];
+        byte r = data[index - 1];
+        byte a = data[index];
+        color = new Color(a, r, g, b);
+        return true;
+    }
+
+    protected override Size MeasureContent(Size availableSize)
+    {
+        // Vector sources measure to their intrinsic size; they don't rasterize.
+        if (Source is IVectorImageSource vector)
+        {
+            var intrinsic = vector.IntrinsicSize;
+            return MeasureStretchedSize(intrinsic, availableSize, StretchMode);
+        }
+
+        if (Source is IImageMetadataSource metadataSource
+            && metadataSource.TryGetMetadata(out var metadata))
+        {
+            var metadataOrientation = OrientationMode == ImageOrientationMode.Ignore
+                ? ImageOrientation.Identity
+                : metadata.Orientation;
+            var metadataOrientedSize = OrientationTransform.GetOrientedSize(
+                metadataOrientation,
+                metadata.PixelWidth,
+                metadata.PixelHeight);
+            var sourceRect = GetViewBoxPixels((int)metadataOrientedSize.Width, (int)metadataOrientedSize.Height);
+            return MeasureStretchedSize(sourceRect.Size, availableSize, StretchMode);
+        }
+
+        var img = GetImage();
+        if (img == null)
+        {
+            return Size.Empty;
+        }
+
+        // Measurement and ViewBox are in oriented space, so a quarter-turned image measures with its
+        // width and height swapped.
+        var orientation = GetEffectiveOrientation();
+        var orientedSize = OrientationTransform.GetOrientedSize(orientation, img.PixelWidth, img.PixelHeight);
+        var src = GetViewBoxPixels((int)orientedSize.Width, (int)orientedSize.Height);
+
+        // Pixels are treated as DIPs for now (1px == 1dip at 96dpi).
+        return MeasureStretchedSize(src.Size, availableSize, StretchMode);
+    }
+
+    protected override void OnRender(IGraphicsContext context)
+    {
+        // Vector sources render themselves at the laid-out size (crisp at any scale), so a resize
+        // re-renders instead of stretching a fixed raster.
+        if (Source is IVectorImageSource vector)
+        {
+            RenderVector(context, vector);
+            return;
+        }
+
+        var prevScaleQuality = context.ImageScaleQuality;
+        context.ImageScaleQuality = ImageScaleQuality;
+
+        // Always clip to the control bounds to avoid overflowing when the image's natural size
+        // is larger than the arranged size.
+        context.Save();
+        var dpiScale = GetDpi() / 96.0;
+        context.SetClip(LayoutRounding.SnapViewportRectToPixels(Bounds, dpiScale));
+
+        try
+        {
+            ImageOrientation orientation;
+            int intrinsicRawWidth;
+            int intrinsicRawHeight;
+            if (Source is ImageSource imageSource && imageSource.TryGetMetadata(out var metadata))
+            {
+                orientation = OrientationMode == ImageOrientationMode.Ignore
+                    ? ImageOrientation.Normal
+                    : OrientationTransform.Normalize(metadata.Orientation);
+                intrinsicRawWidth = metadata.PixelWidth;
+                intrinsicRawHeight = metadata.PixelHeight;
+            }
+            else
+            {
+                var unscaledImage = GetImage();
+                if (unscaledImage == null)
+                {
+                    return;
+                }
+                orientation = GetEffectiveOrientation();
+                intrinsicRawWidth = unscaledImage.PixelWidth;
+                intrinsicRawHeight = unscaledImage.PixelHeight;
+            }
+
+            var orientedSize = OrientationTransform.GetOrientedSize(
+                orientation,
+                intrinsicRawWidth,
+                intrinsicRawHeight);
+
+            // ViewBox, Stretch and alignment are computed in oriented space (what the viewer sees).
+            var srcRect = GetViewBoxPixels((int)orientedSize.Width, (int)orientedSize.Height);
+            if (srcRect.Size.IsEmpty)
+            {
+                return;
+            }
+
+            ComputeRects(srcRect, Bounds, StretchMode, AlignmentX, AlignmentY, out var dest, out var src);
+            if (dest.Width <= 0 || dest.Height <= 0 || src.Width <= 0 || src.Height <= 0)
+            {
+                return;
+            }
+
+            var (targetRawWidth, targetRawHeight, targetScale) = ComputeDecodeTarget(
+                intrinsicRawWidth,
+                intrinsicRawHeight,
+                orientation,
+                src,
+                dest,
+                dpiScale);
+            var img = GetImage(targetRawWidth, targetRawHeight, targetScale);
+            if (img == null)
+            {
+                return;
+            }
+
+            // Source and ViewBox stay in intrinsic coordinates. The actual resident texel dimensions
+            // are consumed only by this internal draw adapter and never become layout/API dimensions.
+            context.DrawImageOrientedScaled(
+                img,
+                orientation,
+                intrinsicRawWidth,
+                intrinsicRawHeight,
+                img.PixelWidth,
+                img.PixelHeight,
+                src,
+                dest);
+        }
+        finally
+        {
+            context.Restore();
+            context.ImageScaleQuality = prevScaleQuality;
+        }
+    }
+
+    private Rect GetViewBoxPixels(int pixelWidth, int pixelHeight)
+    {
+        double iw = Math.Max(0, pixelWidth);
+        double ih = Math.Max(0, pixelHeight);
+        var full = new Rect(0, 0, iw, ih);
+        if (ViewBox is not Rect vb)
+        {
+            return full;
+        }
+
+        double x = vb.X;
+        double y = vb.Y;
+        double w = vb.Width;
+        double h = vb.Height;
+
+        if (double.IsNaN(x) || double.IsInfinity(x) ||
+            double.IsNaN(y) || double.IsInfinity(y) ||
+            double.IsNaN(w) || double.IsInfinity(w) ||
+            double.IsNaN(h) || double.IsInfinity(h))
+        {
+            return full;
+        }
+
+        if (ViewBoxUnits == ImageViewBoxUnits.RelativeToBoundingBox)
+        {
+            x *= iw;
+            y *= ih;
+            w *= iw;
+            h *= ih;
+        }
+
+        if (w <= 0 || h <= 0)
+        {
+            return full;
+        }
+
+        // Clamp into image bounds.
+        if (x < 0) { w += x; x = 0; }
+        if (y < 0) { h += y; y = 0; }
+
+        if (x > iw || y > ih)
+        {
+            return new Rect(0, 0, 0, 0);
+        }
+
+        if (x + w > iw) { w = iw - x; }
+        if (y + h > ih) { h = ih - y; }
+
+        if (w <= 0 || h <= 0)
+        {
+            return new Rect(0, 0, 0, 0);
+        }
+
+        return new Rect(x, y, w, h);
+    }
+
+    private static Size MeasureStretchedSize(Size naturalSize, Size availableSize, Stretch stretch)
+    {
+        double nw = Math.Max(0, naturalSize.Width);
+        double nh = Math.Max(0, naturalSize.Height);
+        if (nw <= 0 || nh <= 0)
+        {
+            return Size.Empty;
+        }
+
+        bool widthConstrained = IsFiniteNonNegative(availableSize.Width);
+        bool heightConstrained = IsFiniteNonNegative(availableSize.Height);
+        double scaleX = widthConstrained ? availableSize.Width / nw : 1.0;
+        double scaleY = heightConstrained ? availableSize.Height / nh : 1.0;
+
+        switch (stretch)
+        {
+            case Stretch.Fill:
+                return new Size(nw * scaleX, nh * scaleY);
+
+            case Stretch.Uniform:
+            {
+                double scale = (widthConstrained, heightConstrained) switch
+                {
+                    (true, true) => Math.Min(scaleX, scaleY),
+                    (true, false) => scaleX,
+                    (false, true) => scaleY,
+                    _ => 1.0
+                };
+                return new Size(nw * scale, nh * scale);
+            }
+
+            case Stretch.UniformToFill:
+            {
+                double scale = (widthConstrained, heightConstrained) switch
+                {
+                    (true, true) => Math.Max(scaleX, scaleY),
+                    (true, false) => scaleX,
+                    (false, true) => scaleY,
+                    _ => 1.0
+                };
+                return new Size(nw * scale, nh * scale);
+            }
+
+            case Stretch.None:
+            default:
+                return new Size(nw, nh);
+        }
+    }
+
+    private static bool IsFiniteNonNegative(double value) =>
+        !double.IsNaN(value) && !double.IsInfinity(value) && value >= 0;
+
+    internal static (int RawWidth, int RawHeight, double Scale) ComputeDecodeTarget(
+        int intrinsicRawWidth,
+        int intrinsicRawHeight,
+        ImageOrientation orientation,
+        Rect intrinsicOrientedSource,
+        Rect destinationDip,
+        double dpiScale)
+    {
+        if (intrinsicRawWidth <= 0 || intrinsicRawHeight <= 0
+            || intrinsicOrientedSource.Width <= 0 || intrinsicOrientedSource.Height <= 0
+            || destinationDip.Width <= 0 || destinationDip.Height <= 0)
+        {
+            return (Math.Max(1, intrinsicRawWidth), Math.Max(1, intrinsicRawHeight), 1);
+        }
+
+        double scaleX = destinationDip.Width * Math.Max(dpiScale, 0) / intrinsicOrientedSource.Width;
+        double scaleY = destinationDip.Height * Math.Max(dpiScale, 0) / intrinsicOrientedSource.Height;
+        double requestedScale = Math.Clamp(Math.Max(scaleX, scaleY), 1.0 / Math.Max(intrinsicRawWidth, intrinsicRawHeight), 1);
+        int targetRawWidth = Math.Clamp((int)Math.Ceiling(intrinsicRawWidth * requestedScale), 1, intrinsicRawWidth);
+        int targetRawHeight = Math.Clamp((int)Math.Ceiling(intrinsicRawHeight * requestedScale), 1, intrinsicRawHeight);
+
+        if (targetRawWidth > 64 || targetRawHeight > 64)
+        {
+            targetRawWidth = Math.Min(intrinsicRawWidth, checked((targetRawWidth + 127) / 128 * 128));
+            targetRawHeight = Math.Min(intrinsicRawHeight, checked((targetRawHeight + 127) / 128 * 128));
+        }
+
+        double targetScale = Math.Min(
+            (double)targetRawWidth / intrinsicRawWidth,
+            (double)targetRawHeight / intrinsicRawHeight);
+        return (targetRawWidth, targetRawHeight, targetScale);
+    }
+
+    private static void ComputeRects(
+        Rect sourceRect,
+        Rect bounds,
+        Stretch stretch,
+        ImageAlignmentX alignX,
+        ImageAlignmentY alignY,
+        out Rect dest,
+        out Rect src)
+    {
+        src = sourceRect;
+
+        double sw = Math.Max(0, sourceRect.Width);
+        double sh = Math.Max(0, sourceRect.Height);
+        if (sw <= 0 || sh <= 0 || bounds.Width <= 0 || bounds.Height <= 0)
+        {
+            dest = new Rect(bounds.X, bounds.Y, 0, 0);
+            return;
+        }
+
+        switch (stretch)
+        {
+            case Stretch.Fill:
+                dest = bounds;
+                return;
+
+            case Stretch.Uniform:
+            {
+                double scale = Math.Min(bounds.Width / sw, bounds.Height / sh);
+                double dw = sw * scale;
+                double dh = sh * scale;
+                double ax = alignX == ImageAlignmentX.Left ? 0 : alignX == ImageAlignmentX.Right ? 1 : 0.5;
+                double ay = alignY == ImageAlignmentY.Top ? 0 : alignY == ImageAlignmentY.Bottom ? 1 : 0.5;
+                double dx = bounds.X + (bounds.Width - dw) * ax;
+                double dy = bounds.Y + (bounds.Height - dh) * ay;
+                dest = new Rect(dx, dy, dw, dh);
+                return;
+            }
+
+            case Stretch.UniformToFill:
+            {
+                double boundsAspect = bounds.Width / bounds.Height;
+                double srcAspect = sw / sh;
+
+                // Fill the bounds and crop the source to preserve aspect ratio.
+                if (boundsAspect > srcAspect)
+                {
+                    double cropH = sw / boundsAspect;
+                    double cropY = (sh - cropH) / 2;
+                    src = new Rect(sourceRect.X, sourceRect.Y + cropY, sw, cropH);
+                }
+                else if (boundsAspect < srcAspect)
+                {
+                    double cropW = sh * boundsAspect;
+                    double cropX = (sw - cropW) / 2;
+                    src = new Rect(sourceRect.X + cropX, sourceRect.Y, cropW, sh);
+                }
+
+                dest = bounds;
+                return;
+            }
+
+            case Stretch.None:
+            default:
+            {
+                // Keep pixel size; center within bounds (and clip).
+                double ax = alignX == ImageAlignmentX.Left ? 0 : alignX == ImageAlignmentX.Right ? 1 : 0.5;
+                double ay = alignY == ImageAlignmentY.Top ? 0 : alignY == ImageAlignmentY.Bottom ? 1 : 0.5;
+                double dx = bounds.X + (bounds.Width - sw) * ax;
+                double dy = bounds.Y + (bounds.Height - sh) * ay;
+                dest = new Rect(dx, dy, sw, sh);
+                return;
+            }
+        }
+    }
+
+    private IImage? GetImage() => GetImage(0, 0, 1);
+
+    private IImage? GetImage(int targetRawWidth, int targetRawHeight, double targetScale)
+    {
+        if (Source == null)
+        {
+            return null;
+        }
+
+        var factory = Application.IsRunning ? Application.Current.GraphicsFactory : Application.DefaultGraphicsFactory;
+        if (_cachedImage != null
+            && ReferenceEquals(_cachedFactory, factory)
+            && _cachedRasterScale + 1e-9 >= targetScale)
+        {
+            return _cachedImage;
+        }
+
+        // First use, or the graphics factory changed (rare - a runtime backend swap).
+        _cachedImage?.Dispose();
+        if (targetRawWidth > 0 && targetRawHeight > 0)
+        {
+            _cachedImage = Source.CreateImage(factory, targetRawWidth, targetRawHeight);
+            // The scale that was asked for, not one derived from the produced pixel size: a variant
+            // whose width rounds down reports a smaller scale than the request, so deriving it here
+            // missed this cache on every frame and rebuilt the backend texture each time.
+            _cachedRasterScale = targetScale;
+        }
+        else
+        {
+            _cachedImage = Source.CreateImage(factory);
+            _cachedRasterScale = 1;
+        }
+        _cachedFactory = factory;
+        return _cachedImage;
+    }
+
+    private void ClearCache()
+    {
+        _cachedImage?.Dispose();
+        _cachedImage = null;
+        _cachedFactory = null;
+        _cachedRasterScale = 0;
+    }
+
+    protected override void OnVisualRootChanged(Element? oldRoot, Element? newRoot)
+    {
+        base.OnVisualRootChanged(oldRoot, newRoot);
+
+        // Detached (e.g. a virtualized tile recycled): drop the raster cache, but hand the vector
+        // surface to the window's reclaimer so a re-realize can reuse it instead of rebuilding the
+        // offscreen surface. RenderVector reclaims it (size-matched) on the next paint.
+        if (newRoot == null)
+        {
+            ClearCache();
+            ParkVectorCache(oldRoot as Window);
+        }
+    }
+
+    protected override void OnDispose()
+    {
+        base.OnDispose();
+
+        if (_notifySource != null)
+        {
+            _notifySource.Changed -= OnSourceChanged;
+            _notifySource = null;
+        }
+
+        ClearCache();
+        ClearVectorCache();
+    }
+
+    private void OnSourceChanged()
+    {
+        // Raster IImage instances refresh from the source themselves (e.g. WriteableBitmap.Version); the
+        // rasterized vector bitmap is a snapshot - mark it stale (keep the surface) so a content change
+        // (e.g. tint) re-renders into it.
+        InvalidateVectorContent();
+        InvalidateVisual();
+    }
+}

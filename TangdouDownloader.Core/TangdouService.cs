@@ -100,9 +100,9 @@ public sealed class TangdouVideoService : IVideoResolver, IDisposable
                 var rawUrl = GetDirectString(data, "play_url", "video_url", "playUrl", "videoUrl")
                     ?? GetString(data, "play_url", "video_url", "playUrl", "videoUrl");
                 if (string.IsNullOrWhiteSpace(rawUrl)) continue;
-                var urls = await ProbeUrlsAsync(rawUrl, cancellationToken);
+                var (urls, sizes) = await ProbeUrlsAsync(rawUrl, cancellationToken);
                 if (urls.Count == 0) urls["默认"] = rawUrl;
-                return new VideoInfo(vid, string.IsNullOrWhiteSpace(title) ? "未命名视频" : title!, urls, coverUrl);
+                return new VideoInfo(vid, string.IsNullOrWhiteSpace(title) ? "未命名视频" : title!, urls, coverUrl, sizes);
             }
             catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
             {
@@ -175,9 +175,12 @@ public sealed class TangdouVideoService : IVideoResolver, IDisposable
             : null;
     }
 
-    private async Task<Dictionary<string, string>> ProbeUrlsAsync(string rawUrl, CancellationToken cancellationToken)
+    private async Task<(Dictionary<string, string> Urls, Dictionary<string, long> Sizes)> ProbeUrlsAsync(
+        string rawUrl,
+        CancellationToken cancellationToken)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var sizes = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         await Task.WhenAll(Resolutions.Select(async resolution =>
         {
             var candidate = Regex.Replace(rawUrl, @"_.[0-9]+P", "_" + resolution);
@@ -188,11 +191,16 @@ public sealed class TangdouVideoService : IVideoResolver, IDisposable
                 // The original downloader treats every response except a concrete 404 as an
                 // available quality. Some CDN nodes reject HEAD with a non-2xx status but
                 // still serve the same URL to a GET request.
-                if (response.StatusCode != HttpStatusCode.NotFound) lock (result) result[resolution] = candidate;
+                if (response.StatusCode != HttpStatusCode.NotFound)
+                    lock (result)
+                    {
+                        result[resolution] = candidate;
+                        sizes[resolution] = response.Content.Headers.ContentLength ?? -1;
+                    }
             }
             catch (HttpRequestException) { }
         }));
-        return result;
+        return (result, sizes);
     }
 
     public static HttpRequestMessage CreateRequest(HttpMethod method, string url)
@@ -219,7 +227,7 @@ public sealed class VideoDownloadService : IVideoDownloader
         string directory,
         IProgress<DownloadProgress>? progress = null,
         CancellationToken cancellationToken = default)
-        => DownloadAsync(url, title, directory, progress, cancellationToken, 2);
+        => DownloadAsync(url, title, directory, progress, cancellationToken, 1);
 
     public async Task<DownloadResult> DownloadAsync(
         string url,
@@ -234,8 +242,8 @@ public sealed class VideoDownloadService : IVideoDownloader
         var filePath = Path.Combine(directory, DownloaderUtils.SanitizeFileName(title) + ".mp4");
         var partialPath = filePath + ".part";
 
-        // Preserve existing resumable downloads. Segment files are intentionally
-        // removed on interruption, while the established .part format can resume.
+        // Preserve existing resumable downloads. The single-stream .part file can
+        // resume directly; segmented downloads keep their per-segment state.
         if (downloadThreads <= 1 || File.Exists(partialPath))
             return await DownloadSequentiallyAsync(url, filePath, partialPath, progress, cancellationToken);
 
@@ -258,7 +266,11 @@ public sealed class VideoDownloadService : IVideoDownloader
                 total.Value * index / segmentCount,
                 total.Value * (index + 1) / segmentCount - 1))
             .ToArray();
-        long received = 0;
+        long received = Enumerable.Range(0, segmentCount).Sum(index =>
+            Math.Clamp(
+                File.Exists(segmentPaths[index]) ? new FileInfo(segmentPaths[index]).Length : 0L,
+                0,
+                ranges[index].End - ranges[index].Start + 1));
         progress?.Report(new DownloadProgress(received, total.Value));
 
         try
@@ -284,6 +296,11 @@ public sealed class VideoDownloadService : IVideoDownloader
             DeleteFiles(segmentPaths);
             onSingleThreadFallback?.Invoke();
             return await DownloadSequentiallyAsync(url, filePath, partialPath, progress, cancellationToken, usedSingleThreadFallback: true);
+        }
+        catch (OperationCanceledException)
+        {
+            // Keep downloaded segment bytes for pause/resume.
+            throw;
         }
         catch
         {
@@ -314,8 +331,13 @@ public sealed class VideoDownloadService : IVideoDownloader
         Action<int> reportBytes,
         CancellationToken cancellationToken)
     {
+        var existing = File.Exists(segmentPath) ? new FileInfo(segmentPath).Length : 0L;
+        var rangeLength = range.End - range.Start + 1;
+        if (existing >= rangeLength) return;
+
+        var requestStart = range.Start + existing;
         using var request = TangdouVideoService.CreateRequest(HttpMethod.Get, url);
-        request.Headers.Range = new RangeHeaderValue(range.Start, range.End);
+        request.Headers.Range = new RangeHeaderValue(requestStart, range.End);
         using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (!response.IsSuccessStatusCode) response.EnsureSuccessStatusCode();
         var contentRange = response.Content.Headers.ContentRange;
@@ -326,7 +348,13 @@ public sealed class VideoDownloadService : IVideoDownloader
         response.EnsureSuccessStatusCode();
 
         await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
-        await using var target = new FileStream(segmentPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true);
+        await using var target = new FileStream(
+            segmentPath,
+            existing > 0 ? FileMode.Append : FileMode.Create,
+            FileAccess.Write,
+            FileShare.None,
+            81920,
+            true);
         var buffer = new byte[81920];
         long received = 0;
         int count;
@@ -336,7 +364,7 @@ public sealed class VideoDownloadService : IVideoDownloader
             reportBytes(count);
             received += count;
         }
-        if (received != range.End - range.Start + 1)
+        if (received != rangeLength - existing)
             throw new RangeNotSupportedException();
     }
 

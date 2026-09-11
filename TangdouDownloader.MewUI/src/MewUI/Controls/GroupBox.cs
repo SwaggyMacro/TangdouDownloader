@@ -1,0 +1,185 @@
+using Aprillz.MewUI.Rendering;
+
+namespace Aprillz.MewUI.Controls;
+
+/// <summary>
+/// A container control that draws a border with a header (WinForms-style GroupBox).
+/// </summary>
+public sealed partial class GroupBox : HeaderedContentControl
+{
+    private static readonly bool _defaultStyleRegistered =
+        DefaultStyles.Register<GroupBox>(DefaultStyles.CreateGroupBoxStyle);
+
+    public static readonly MewProperty<double> HeaderInsetProperty =
+        MewProperty<double>.Register<GroupBox>(nameof(HeaderInset), 0.0,
+            MewPropertyOptions.AffectsLayout);
+
+    /// <summary>
+    /// Gets or sets the horizontal inset for the header.
+    /// </summary>
+    public double HeaderInset
+    {
+        get => GetValue(HeaderInsetProperty);
+        set => SetValue(HeaderInsetProperty, value);
+    }
+
+    static GroupBox()
+    {
+        HeaderSpacingProperty.OverrideDefaultValue<GroupBox>(4.0);
+    }
+
+    internal override void OnAccessKey()
+    {
+        if (Content is UIElement content)
+        {
+            var target = FindFirstFocusable(content);
+            if (target != null)
+            {
+                target.Focus();
+                return;
+            }
+        }
+    }
+
+    private static UIElement? FindFirstFocusable(UIElement element)
+    {
+        if (element.Focusable && element.IsVisible && element.IsEnabled)
+            return element;
+
+        if (element is IVisualTreeHost host)
+        {
+            UIElement? found = null;
+            host.VisitChildren(child =>
+            {
+                if (child is UIElement ui)
+                {
+                    found = FindFirstFocusable(ui);
+                    if (found != null) return false;
+                }
+                return true;
+            });
+            return found;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Measures the content size.
+    /// </summary>
+    /// <param name="availableSize">The available size.</param>
+    /// <returns>The desired size.</returns>
+    protected override Size MeasureContent(Size availableSize)
+    {
+        if (HasTemplateInstance)
+        {
+            return base.MeasureContent(availableSize);
+        }
+
+        var borderInset = GetBorderVisualInset();
+
+        var border = borderInset > 0 ? new Thickness(borderInset) : Thickness.Zero;
+        var padding = Padding;
+        double headerHeight = 0;
+        double headerWidth = 0;
+
+        double availableW = double.IsPositiveInfinity(availableSize.Width)
+            ? double.PositiveInfinity
+            : Math.Max(0, availableSize.Width - padding.HorizontalThickness - border.HorizontalThickness);
+
+        double availableH = double.IsPositiveInfinity(availableSize.Height)
+            ? double.PositiveInfinity
+            : Math.Max(0, availableSize.Height - padding.VerticalThickness - border.VerticalThickness);
+
+        if (Header != null)
+        {
+            Header.Measure(new Size(availableW, double.PositiveInfinity));
+            headerHeight = Header.DesiredSize.Height;
+            headerWidth = Header.DesiredSize.Width;
+        }
+
+        double spacing = (Header != null && Content != null) ? Math.Max(0, HeaderSpacing) : 0;
+        double contentSlotH = double.IsPositiveInfinity(availableH)
+            ? double.PositiveInfinity
+            : Math.Max(0, availableH - headerHeight - spacing);
+
+        double contentW = 0;
+        double contentH = 0;
+        if (Content != null)
+        {
+            Content.Measure(new Size(availableW, contentSlotH));
+            contentW = Content.DesiredSize.Width;
+            contentH = Content.DesiredSize.Height;
+        }
+
+        double desiredW = Math.Max(headerWidth + HeaderInset, contentW);
+        double desiredH = headerHeight + spacing + contentH;
+
+        return new Size(desiredW, desiredH).Inflate(padding).Inflate(border);
+    }
+
+    protected override void ArrangeContent(Rect bounds)
+    {
+        if (HasTemplateInstance)
+        {
+            base.ArrangeContent(bounds);
+            return;
+        }
+
+        var outer = bounds;
+        double boxTop = outer.Y;
+
+        double headerHeight = 0;
+        if (Header != null)
+        {
+            headerHeight = Header.DesiredSize.Height;
+            double headerW = Math.Min(Math.Max(0, outer.Width - HeaderInset), Header.DesiredSize.Width);
+            headerW = Math.Max(0, headerW);
+
+            Header.Arrange(new Rect(
+                outer.X + HeaderInset,
+                outer.Y,
+                headerW,
+                headerHeight));
+
+            boxTop = Header.Bounds.Bottom;
+        }
+
+        double spacing = (Header != null && Content != null) ? Math.Max(0, HeaderSpacing) : 0;
+        double boxY = boxTop + spacing;
+        var boxRect = new Rect(outer.X, boxY, outer.Width, Math.Max(0, outer.Bottom - boxY));
+        var border = BorderThickness > 0 ? new Thickness(BorderThickness) : Thickness.Zero;
+        var innerBox = boxRect.Deflate(border).Deflate(Padding);
+
+        if (Content != null)
+        {
+            Content.Arrange(innerBox);
+        }
+    }
+
+    protected override void OnRender(IGraphicsContext context)
+    {
+        if (HasTemplateInstance)
+        {
+            return;
+        }
+
+        var bounds = GetBorderRenderMetrics(Bounds, BorderThickness, 0).Bounds;
+        if (bounds.Width <= 0 || bounds.Height <= 0)
+        {
+            return;
+        }
+
+        double headerBottom = Header?.Bounds.Bottom ?? bounds.Y;
+        double boxY = headerBottom + (Header != null && Content != null ? Math.Max(0, HeaderSpacing) : 0);
+
+        var boxRect = new Rect(bounds.X, boxY, bounds.Width, Math.Max(0, bounds.Bottom - boxY));
+        if (boxRect.Height <= 0)
+        {
+            return;
+        }
+
+        double radius = CornerRadius;
+        DrawBackgroundAndBorder(context, boxRect, Background, BorderBrush, BorderThickness, radius);
+    }
+}

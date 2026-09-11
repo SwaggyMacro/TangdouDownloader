@@ -1,0 +1,525 @@
+using Aprillz.MewUI.Rendering;
+
+namespace Aprillz.MewUI.Controls;
+
+/// <summary>
+/// Realizes and recycles item containers for a scrollable items host to reduce UI element allocations.
+/// </summary>
+/// <remarks>
+/// This presenter is intended for fixed-height item layouts where only a contiguous visible range is rendered.
+/// </remarks>
+internal sealed class VirtualizedItemsPresenter
+{
+    private readonly FrameworkElement _owner;
+    private Func<FrameworkElement> _createContainer;
+    private Action<FrameworkElement, int> _bind;
+    private Action<FrameworkElement>? _unbind;
+
+    private readonly Dictionary<int, FrameworkElement> _realized = new();
+    private readonly Dictionary<FrameworkElement, uint> _itemBindingGenerations = new();
+    private readonly Stack<FrameworkElement> _pool = new();
+    private readonly Dictionary<int, FrameworkElement> _recycledByIndex = new();
+    private HashSet<int>? _pendingRebind;
+    private UIElement? _deferredFocusedElement;
+    private UIElement? _deferredFocusOwner;
+    private int? _deferredFocusedIndex;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="VirtualizedItemsPresenter"/> class.
+    /// </summary>
+    public VirtualizedItemsPresenter(
+        FrameworkElement owner,
+        Func<FrameworkElement> createContainer,
+        Action<FrameworkElement, int> bind,
+        Action<FrameworkElement>? unbind = null)
+    {
+        _owner = owner ?? throw new ArgumentNullException(nameof(owner));
+        _createContainer = createContainer ?? throw new ArgumentNullException(nameof(createContainer));
+        _bind = bind ?? throw new ArgumentNullException(nameof(bind));
+        _unbind = unbind;
+    }
+
+    /// <summary>
+    /// Gets the number of currently realized containers.
+    /// </summary>
+    public int RealizedCount => _realized.Count;
+
+    /// <summary>
+    /// Updates the container factory/binding callbacks used for realization.
+    /// </summary>
+    public void SetTemplate(
+        Func<FrameworkElement> createContainer,
+        Action<FrameworkElement, int> bind,
+        Action<FrameworkElement>? unbind = null,
+        bool clearPool = false)
+    {
+        ArgumentNullException.ThrowIfNull(createContainer);
+        ArgumentNullException.ThrowIfNull(bind);
+
+        bool containerChanged = !ReferenceEquals(_createContainer, createContainer);
+        if (containerChanged || clearPool)
+        {
+            RecycleAll();
+            _pool.Clear();
+            _recycledByIndex.Clear();
+        }
+
+        _createContainer = createContainer;
+        _bind = bind;
+        _unbind = unbind;
+    }
+
+    /// <summary>
+    /// Recycles all realized containers back into the pool.
+    /// </summary>
+    public void RecycleAll()
+    {
+        var keys = GetSortedKeys();
+        for (int i = 0; i < keys.Length; i++)
+        {
+            Recycle(keys[i]);
+        }
+    }
+
+    public void Dispose()
+    {
+        RecycleAll();
+        FlushRecycledByIndexToPool();
+        _pool.Clear();
+        _pendingRebind?.Clear();
+        ClearDeferredFocus();
+    }
+
+    /// <summary>
+    /// Visits all realized containers (useful for diagnostic traversal).
+    /// </summary>
+    public void VisitRealized(Action<Element> visitor)
+    {
+        if (_realized.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var key in GetSortedKeys())
+        {
+            visitor(_realized[key]);
+        }
+    }
+
+    public void VisitRealized(Action<int, FrameworkElement> visitor)
+    {
+        if (_realized.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var key in GetSortedKeys())
+        {
+            visitor(key, _realized[key]);
+        }
+    }
+
+    /// <summary>
+    /// Visits realized containers with short-circuit support. Returns false if the visitor stopped early.
+    /// </summary>
+    public bool VisitRealized(Func<Element, bool> visitor)
+    {
+        if (_realized.Count == 0)
+        {
+            return true;
+        }
+
+        foreach (var key in GetSortedKeys())
+        {
+            if (!visitor(_realized[key]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Per-instance (not [ThreadStatic]): GetSortedKeys returns a span over this buffer, so a nested
+    // presenter must not share it - that would clobber an in-flight span. A presenter is never its
+    // own descendant, so same-instance reentrancy cannot occur.
+    private List<int>? _sortedKeysBuffer;
+
+    private ReadOnlySpan<int> GetSortedKeys()
+    {
+        _sortedKeysBuffer ??= new List<int>();
+        _sortedKeysBuffer.Clear();
+
+        foreach (var key in _realized.Keys)
+        {
+            _sortedKeysBuffer.Add(key);
+        }
+
+        _sortedKeysBuffer.Sort();
+#if NET8_0_OR_GREATER
+        return System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_sortedKeysBuffer);
+#else
+        return _sortedKeysBuffer.ToArray();
+#endif
+    }
+
+    /// <summary>
+    /// Realizes, arranges, and renders a contiguous range of items.
+    /// </summary>
+    public void RenderRange(
+        IGraphicsContext context,
+        Rect contentBounds,
+        int first,
+        int lastExclusive,
+        double itemHeight,
+        double yStart,
+        Action<IGraphicsContext, int, Rect>? beforeItemRender = null,
+        Func<int, Rect, Rect>? getContainerRect = null,
+        uint itemBindingGeneration = 0)
+    {
+        if (lastExclusive <= first)
+        {
+            RecycleAll();
+            return;
+        }
+
+        ArrangeRange(
+            contentBounds,
+            first,
+            lastExclusive,
+            itemHeight,
+            yStart,
+            getContainerRect,
+            itemBindingGeneration);
+
+        double dpiScale = _owner.GetDpiScaleCached();
+        int baseYPx = LayoutRounding.RoundToPixelInt(yStart, dpiScale);
+        int itemHeightPx = LayoutRounding.RoundToPixelInt(itemHeight, dpiScale);
+        double itemHeightDip = itemHeightPx / dpiScale;
+
+        for (int i = first; i < lastExclusive; i++)
+        {
+            if (!_realized.TryGetValue(i, out var element)) continue;
+
+            int yPx = baseYPx + (i - first) * itemHeightPx;
+            double y = yPx / dpiScale;
+            var itemRect = new Rect(contentBounds.X, y, contentBounds.Width, itemHeightDip);
+            beforeItemRender?.Invoke(context, i, itemRect);
+            element.Render(context);
+        }
+    }
+
+    /// <summary>
+    /// Renders a contiguous range of items assuming they have already been realized and arranged.
+    /// Does not create, bind, measure, arrange, or recycle containers.
+    /// </summary>
+    public void RenderArrangedRange(
+        IGraphicsContext context,
+        Rect contentBounds,
+        int first,
+        int lastExclusive,
+        double itemHeight,
+        double yStart,
+        Action<IGraphicsContext, int, Rect>? beforeItemRender = null)
+    {
+        if (lastExclusive <= first)
+        {
+            return;
+        }
+
+        double dpiScale = _owner.GetDpiScaleCached();
+        int baseYPx = LayoutRounding.RoundToPixelInt(yStart, dpiScale);
+        int itemHeightPx = LayoutRounding.RoundToPixelInt(itemHeight, dpiScale);
+        double itemHeightDip = itemHeightPx / dpiScale;
+
+        for (int i = first; i < lastExclusive; i++)
+        {
+            if (!_realized.TryGetValue(i, out var element))
+            {
+                continue;
+            }
+
+            int yPx = baseYPx + (i - first) * itemHeightPx;
+            double y = yPx / dpiScale;
+            var itemRect = new Rect(contentBounds.X, y, contentBounds.Width, itemHeightDip);
+            beforeItemRender?.Invoke(context, i, itemRect);
+            element.Render(context);
+        }
+    }
+
+    /// <summary>
+    /// Realizes and arranges a contiguous range of items without rendering.
+    /// </summary>
+    public void ArrangeRange(
+        Rect contentBounds,
+        int first,
+        int lastExclusive,
+        double itemHeight,
+        double yStart,
+        Func<int, Rect, Rect>? getContainerRect = null,
+        uint itemBindingGeneration = 0)
+    {
+        if (lastExclusive <= first)
+        {
+            RecycleAll();
+            return;
+        }
+
+        var realizedKeys = GetSortedKeys();
+        for (int i = 0; i < realizedKeys.Length; i++)
+        {
+            int key = realizedKeys[i];
+            if (key < first || key >= lastExclusive)
+            {
+                if (!IsFocusedSubtree(key))
+                {
+                    Recycle(key);
+                }
+                else
+                {
+                    // Don't rebind focus-pinned items immediately - it can reset
+                    // user-interaction state (e.g. ToggleSwitch.IsChecked).
+                    // Defer rebind + style snap until the item re-enters the visible range.
+                    (_pendingRebind ??= new()).Add(key);
+                }
+            }
+        }
+
+        double dpiScale = _owner.GetDpiScaleCached();
+        int baseYPx = LayoutRounding.RoundToPixelInt(yStart, dpiScale);
+        int itemHeightPx = LayoutRounding.RoundToPixelInt(itemHeight, dpiScale);
+        double itemHeightDip = itemHeightPx / dpiScale;
+
+        for (int i = first; i < lastExclusive; i++)
+        {
+            int yPx = baseYPx + (i - first) * itemHeightPx;
+            double y = yPx / dpiScale;
+            var itemRect = new Rect(contentBounds.X, y, contentBounds.Width, itemHeightDip);
+
+            var containerRect = getContainerRect != null ? getContainerRect(i, itemRect) : itemRect;
+            // Keep container geometry stable at fractional DPI (e.g. 150%) and avoid edge-based +1px drift.
+            containerRect = LayoutRounding.RoundRectToPixels(containerRect, dpiScale);
+            var element = GetOrCreate(i, itemBindingGeneration);
+            element.Measure(new Size(Math.Max(0, containerRect.Width), Math.Max(0, containerRect.Height)));
+            element.Arrange(containerRect);
+        }
+
+        FlushRecycledByIndexToPool();
+    }
+
+    internal FrameworkElement GetOrCreate(int index, uint itemBindingGeneration)
+    {
+        if (_realized.TryGetValue(index, out var existing))
+        {
+            // Also rebind if the item was focus-pinned and missed a prior rebind pass.
+            bool pending = _pendingRebind != null && _pendingRebind.Remove(index);
+            bool generationMismatch = !_itemBindingGenerations.TryGetValue(existing, out var boundGeneration)
+                || boundGeneration != itemBindingGeneration;
+            if (generationMismatch || pending)
+            {
+                _bind(existing, index);
+                _itemBindingGenerations[existing] = itemBindingGeneration;
+            }
+
+            // When a focus-pinned item re-enters the visible range after being off-screen,
+            // its cached VisualState may be stale (e.g. still has Focused/Active flags).
+            // Force snap so the next Render applies the correct style immediately.
+            if (pending)
+            {
+                ForceStyleSnapSubtree(existing);
+            }
+
+            return existing;
+        }
+
+        FrameworkElement element;
+        if (_recycledByIndex.Remove(index, out var recycled))
+        {
+            element = recycled;
+        }
+        else
+        {
+            element = _pool.Count > 0 ? _pool.Pop() : _createContainer();
+        }
+
+        element.Parent = _owner;
+        element.IsVisible = true;
+
+        _bind(element, index);
+        _itemBindingGenerations[element] = itemBindingGeneration;
+        _realized[index] = element;
+
+        TryRestoreDeferredFocus(element, index);
+        return element;
+    }
+
+    internal void Recycle(int index)
+    {
+        if (!_realized.Remove(index, out var element))
+        {
+            return;
+        }
+
+        if (element is UIElement uiElement && _owner.FindVisualRoot() is Window window)
+        {
+            var focused = window.FocusManager.FocusedElement;
+            if (focused != null && VisualTree.IsInSubtreeOf(focused, uiElement))
+            {
+                _deferredFocusedElement = focused;
+                _deferredFocusedIndex = index;
+
+                if (_owner is UIElement ownerUi && ownerUi.Focusable && ownerUi.IsEffectivelyEnabled && ownerUi.IsVisible)
+                {
+                    _deferredFocusOwner = ownerUi;
+                    window.FocusManager.SetFocus(ownerUi);
+                }
+                else
+                {
+                    _deferredFocusOwner = null;
+                    // When we clear focus due to virtualization, only restore if focus stays null and the same item
+                    // index is realized again. This avoids restoring focus onto a recycled container that now
+                    // represents a different item.
+                    window.FocusManager.ClearFocus();
+                }
+            }
+        }
+
+        _unbind?.Invoke(element);
+        _itemBindingGenerations.Remove(element);
+        element.Parent = null;
+        if (!_recycledByIndex.TryAdd(index, element))
+        {
+            _pool.Push(element);
+        }
+    }
+
+    internal void FlushRecycledByIndexToPool()
+    {
+        if (_recycledByIndex.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var element in _recycledByIndex.Values)
+        {
+            _pool.Push(element);
+        }
+
+        _recycledByIndex.Clear();
+    }
+
+    /// <summary>
+    /// Where focus goes back to: the element it left, or the nearest ancestor inside the container that
+    /// can take it. Null when nothing in the container can.
+    /// </summary>
+    private static UIElement? ResolveRestoreTarget(UIElement deferred, Element root)
+    {
+        for (Element? current = deferred; current != null; current = current.Parent)
+        {
+            if (current is UIElement candidate
+                && candidate.Focusable && candidate.IsEffectivelyEnabled && candidate.IsVisible)
+            {
+                return candidate;
+            }
+
+            if (ReferenceEquals(current, root))
+            {
+                break;
+            }
+        }
+
+        return null;
+    }
+
+    private void TryRestoreDeferredFocus(FrameworkElement container, int index)
+    {
+        if (_deferredFocusedIndex != index)
+        {
+            return;
+        }
+
+        var deferred = _deferredFocusedElement;
+        if (deferred == null)
+        {
+            return;
+        }
+
+        if (_owner.FindVisualRoot() is not Window window)
+        {
+            return;
+        }
+
+        // Only restore if focus hasn't moved elsewhere since we deferred it.
+        if (_deferredFocusOwner != null)
+        {
+            if (!ReferenceEquals(window.FocusManager.FocusedElement, _deferredFocusOwner))
+            {
+                ClearDeferredFocus();
+                return;
+            }
+        }
+        else
+        {
+            // Focus was cleared when we deferred it; only restore if focus is still null.
+            if (window.FocusManager.FocusedElement != null)
+            {
+                ClearDeferredFocus();
+                return;
+            }
+        }
+
+        if (container is not Element root || !VisualTree.IsInSubtreeOf(deferred, root))
+        {
+            ClearDeferredFocus();
+            return;
+        }
+
+        // The element focus left can be gone by the time the container comes back: a template part shown
+        // only while editing is hidden again once the recycle ends that edit. The nearest ancestor that
+        // can hold focus is the control itself, which is what the user was on.
+        var target = ResolveRestoreTarget(deferred, root);
+        if (target == null)
+        {
+            ClearDeferredFocus();
+            return;
+        }
+
+        window.FocusManager.SetFocus(target);
+        ClearDeferredFocus();
+    }
+
+    private void ClearDeferredFocus()
+    {
+        _deferredFocusedElement = null;
+        _deferredFocusOwner = null;
+        _deferredFocusedIndex = null;
+    }
+
+    private static void ForceStyleSnapSubtree(FrameworkElement container)
+    {
+        VisualTree.Visit(container, static element =>
+        {
+            if (element is Control control)
+            {
+                control.ForceStyleSnap();
+            }
+        });
+    }
+
+    private bool IsFocusedSubtree(int index)
+    {
+        if (!_realized.TryGetValue(index, out var element) || element is not UIElement uiElement)
+        {
+            return false;
+        }
+
+        if (_owner.FindVisualRoot() is not Window window)
+        {
+            return false;
+        }
+
+        var focused = window.FocusManager.FocusedElement;
+        return focused != null && VisualTree.IsInSubtreeOf(focused, uiElement);
+    }
+
+}

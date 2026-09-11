@@ -1,0 +1,504 @@
+using Aprillz.MewUI.Rendering;
+using Aprillz.MewUI.Text;
+
+namespace Aprillz.MewUI.Controls;
+
+/// <summary>
+/// A scrollable items host without built-in selection semantics.
+/// </summary>
+public sealed partial class ItemsControl : ScrollableItemsBase
+{
+    static ItemsControl() { }
+
+    private static readonly bool _defaultStyleRegistered =
+        DefaultStyles.Register<ItemsControl>(DefaultStyles.CreateItemsControlStyle);
+
+    private IItemsPresenter _presenter;
+    private IDataTemplate _itemTemplate;
+
+    internal bool ShowRowHover { get; set; } = false;
+
+    private int _hoverIndex = -1;
+    private bool _hasLastMousePosition;
+    private Point _lastMousePosition;
+
+    private IItemsView _itemsSource = ItemsView.Empty;
+    // Presenter mode is determined by the IItemsPresenter instance set via SetPresenter().
+
+    /// <summary>
+    /// Gets or sets the items data source.
+    /// </summary>
+    public IItemsView ItemsSource
+    {
+        get => _itemsSource;
+        set
+        {
+            value ??= ItemsView.Empty;
+            if (ReferenceEquals(_itemsSource, value))
+            {
+                return;
+            }
+
+            _itemsSource.Changed -= OnItemsChanged;
+            _itemsSource = value;
+            _itemsSource.Changed += OnItemsChanged;
+
+            _presenter.ItemsSource = _itemsSource;
+
+            _hoverIndex = -1;
+            InvalidateItemBindings();
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets the height of each item (in DIPs). Use NaN to use theme default.
+    /// </summary>
+    public static readonly MewProperty<double> ItemHeightProperty =
+        MewProperty<double>.Register<ItemsControl>(nameof(ItemHeight), double.NaN, MewPropertyOptions.AffectsLayout);
+
+    public double ItemHeight
+    {
+        get => GetValue(ItemHeightProperty);
+        set => SetValue(ItemHeightProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the padding for each item.
+    /// </summary>
+    public static readonly MewProperty<Thickness> ItemPaddingProperty =
+        MewProperty<Thickness>.Register<ItemsControl>(nameof(ItemPadding), default, MewPropertyOptions.AffectsLayout,
+            static (self, _, newValue) =>
+            {
+                // Propagate to the live presenter. InitializePresenter only copies ItemPadding when a
+                // presenter is created, so without this a later ItemPadding change would not reach an
+                // already-created presenter. (_presenter is null while the constructor sets the initial
+                // theme value before creating the presenter.)
+                if (self._presenter == null)
+                {
+                    return;
+                }
+
+                self._presenter.ItemPadding = newValue;
+                var presenterElement = (UIElement)self._presenter;
+                presenterElement.InvalidateMeasure();
+                presenterElement.InvalidateVisual();
+            });
+
+    public Thickness ItemPadding
+    {
+        get => GetValue(ItemPaddingProperty);
+        set => SetValue(ItemPaddingProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the item template. When not set, a default label template is used.
+    /// </summary>
+    public IDataTemplate ItemTemplate
+    {
+        get => _itemTemplate;
+        set
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            _itemTemplate = value;
+            _presenter.ItemTemplate = WrapItemTemplate(value);
+            InvalidateItemBindings();
+        }
+    }
+
+    private protected override void ReapplyItemTemplate() => _presenter.ItemTemplate = WrapItemTemplate(_itemTemplate);
+
+    public ItemsControl()
+    {
+        _itemsSource.Changed += OnItemsChanged;
+
+        ItemPadding = Theme.Metrics.ItemPadding;
+
+        _scrollViewer.SetBinding(PaddingProperty, this, PaddingProperty);
+        _scrollViewer.ScrollChanged += OnScrollViewerChanged;
+
+        _itemTemplate = CreateDefaultItemTemplate();
+        _presenter = CreateDefaultPresenter();
+        _scrollViewer.Content = (UIElement)_presenter;
+    }
+
+    protected override void OnThemeChanged(Theme oldTheme, Theme newTheme)
+    {
+        base.OnThemeChanged(oldTheme, newTheme);
+
+        if (ItemPadding == oldTheme.Metrics.ItemPadding)
+        {
+            ItemPadding = newTheme.Metrics.ItemPadding;
+            InvalidateItemBindings();
+        }
+    }
+
+    protected override Size MeasureContent(Size availableSize)
+    {
+        var borderInset = GetBorderVisualInset();
+        var dpi = GetDpi();
+
+        double widthLimit = double.IsPositiveInfinity(availableSize.Width)
+            ? double.PositiveInfinity
+            : Math.Max(0, availableSize.Width - Padding.HorizontalThickness - borderInset * 2);
+
+        double maxWidth;
+        int count = ItemsSource.Count;
+
+        // Some presenters (Variable, Stack, Wrap) fill available width by their own contract.
+        // Alignment must not leak into Measure: desired width is the natural item width, stretch
+        // is applied by the arrange pass (issue #199).
+        bool useFullWidth = !double.IsPositiveInfinity(widthLimit) && _presenter.FillsAvailableWidth;
+
+        if (useFullWidth)
+        {
+            maxWidth = widthLimit;
+        }
+        else
+        {
+            var factory = GetGraphicsFactory();
+            var style = GetTextRunStyle();
+            maxWidth = 0;
+
+            if (count > 0 && widthLimit > 0)
+            {
+                double itemPadW = ItemPadding.HorizontalThickness;
+
+                if (count > 4096)
+                {
+                    double itemHeightEstimate = ResolveItemHeight();
+                    double viewportEstimate = double.IsPositiveInfinity(availableSize.Height)
+                        ? _presenter.PreferredViewportHeight
+                        : Math.Max(0, availableSize.Height - Padding.VerticalThickness - borderInset * 2);
+
+                    int visibleEstimate = itemHeightEstimate <= 0 ? count : (int)Math.Ceiling(viewportEstimate / itemHeightEstimate) + 1;
+                    int sampleCount = Math.Clamp(visibleEstimate, 32, 256);
+                    sampleCount = Math.Min(sampleCount, count);
+                    for (int i = 0; i < sampleCount; i++)
+                    {
+                        var text = ItemsSource.GetText(i);
+                        if (string.IsNullOrEmpty(text))
+                        {
+                            continue;
+                        }
+
+                        maxWidth = Math.Max(maxWidth, TextLayoutOperations.Measure(factory, text, dpi, in style).Width + itemPadW);
+                        if (maxWidth >= widthLimit)
+                        {
+                            // Stop measuring, but keep the uncapped width: the scroll extent must
+                            // stay natural (desired is clamped separately).
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < count; i++)
+                    {
+                        var text = ItemsSource.GetText(i);
+                        if (string.IsNullOrEmpty(text))
+                        {
+                            continue;
+                        }
+
+                        maxWidth = Math.Max(maxWidth, TextLayoutOperations.Measure(factory, text, dpi, in style).Width + itemPadW);
+                        if (maxWidth >= widthLimit)
+                        {
+                            // Stop measuring, but keep the uncapped width: the scroll extent must
+                            // stay natural (desired is clamped separately).
+                            break;
+                        }
+                    }
+                }
+            }
+
+        }
+
+        double itemHeight = ResolveItemHeight();
+        _presenter.ItemHeightHint = itemHeight;
+        _presenter.ExtentWidth = maxWidth;
+
+        // Let ScrollViewer update bar visibility/metrics for the current slot.
+        var childAvailable = new Size(
+            double.IsPositiveInfinity(availableSize.Width) ? double.PositiveInfinity : Math.Max(0, availableSize.Width - borderInset * 2),
+            double.IsPositiveInfinity(availableSize.Height) ? double.PositiveInfinity : Math.Max(0, availableSize.Height - borderInset * 2));
+        _scrollViewer.Measure(childAvailable);
+
+        double heightLimit = double.IsPositiveInfinity(availableSize.Height)
+            ? double.PositiveInfinity
+            : Math.Max(0, availableSize.Height - Padding.VerticalThickness - borderInset * 2);
+
+        // Preferred viewport height clamped to the constraint: echoing the full available height
+        // made fit-content windows expand to their max (issue #199). The real viewport still
+        // arrives via Arrange/SetViewport, so virtualization is unaffected.
+        double desiredHeight = Math.Min(_presenter.PreferredViewportHeight, heightLimit);
+
+        return new Size(
+            Math.Max(0, Math.Min(maxWidth, widthLimit) + Padding.HorizontalThickness + borderInset * 2),
+            Math.Max(0, desiredHeight + Padding.VerticalThickness + borderInset * 2));
+    }
+
+    protected override void ArrangeContent(Rect bounds)
+    {
+        base.ArrangeContent(bounds);
+
+        var snapped = GetSnappedBorderBounds(Bounds);
+        var borderInset = GetBorderVisualInset();
+        var innerBounds = snapped.Deflate(new Thickness(borderInset));
+        _presenter.ItemBindingGeneration = ItemBindingGeneration;
+        _scrollViewer.Arrange(innerBounds);
+
+        if (TryConsumeScrollIntoViewRequest(out var request) &&
+            request.Kind == ScrollIntoViewRequestKind.Index)
+        {
+            ScrollIntoView(request.Index);
+        }
+    }
+
+    protected override void OnRender(IGraphicsContext context)
+    {
+        var bounds = GetSnappedBorderBounds(Bounds);
+        double radius = CornerRadius;
+
+        var bg = GetValue(BackgroundProperty);
+        var borderColor = GetValue(BorderBrushProperty);
+        DrawBackgroundAndBorder(context, bounds, bg, borderColor, BorderThickness, radius);
+
+        var dpiScale = GetDpi() / 96.0;
+        var clipR = Math.Max(0, LayoutRounding.RoundToPixel(radius, dpiScale) - GetBorderVisualInset());
+        _scrollViewer.CornerRadius = clipR;
+        _presenter.ItemRadius = clipR;
+    }
+
+    protected override void RenderSubtree(IGraphicsContext context)
+    {
+        _scrollViewer.Render(context);
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+
+        if (!IsEffectivelyEnabled)
+        {
+            return;
+        }
+
+        // A finger does not hover, and a position it left behind must not seed the row hover
+        // that the next scroll re-derives from it.
+        if (e.PointerType == PointerType.Touch)
+        {
+            _hasLastMousePosition = false;
+            if (_hoverIndex != -1)
+            {
+                _hoverIndex = -1;
+                InvalidateVisual();
+            }
+
+            return;
+        }
+
+        _hasLastMousePosition = true;
+        _lastMousePosition = e.GetPosition(this);
+
+        if (!TryGetItemIndexAtCore(_lastMousePosition, out int index))
+        {
+            if (_hoverIndex != -1)
+            {
+                _hoverIndex = -1;
+                InvalidateVisual();
+            }
+            return;
+        }
+
+        if (_hoverIndex != index)
+        {
+            _hoverIndex = index;
+            InvalidateVisual();
+        }
+    }
+
+    protected override void OnMouseLeave()
+    {
+        base.OnMouseLeave();
+
+        _hasLastMousePosition = false;
+        if (_hoverIndex != -1)
+        {
+            _hoverIndex = -1;
+            InvalidateVisual();
+        }
+    }
+
+    public void ScrollIntoView(int index)
+    {
+        int count = ItemsSource.Count;
+        if (index < 0 || index >= count)
+        {
+            return;
+        }
+
+        double viewport = GetViewportHeightDip();
+        if (viewport <= 0 || double.IsNaN(viewport) || double.IsInfinity(viewport))
+        {
+            RequestScrollIntoView(ScrollIntoViewRequest.IndexRequest(index));
+            return;
+        }
+
+        _presenter.RequestScrollIntoView(index);
+        InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Sets both scroll offsets simultaneously.
+    /// </summary>
+    /// <param name="horizontalOffset">The horizontal offset in DIPs.</param>
+    /// <param name="verticalOffset">The vertical offset in DIPs.</param>
+    public void SetScrollOffsets(double horizontalOffset, double verticalOffset)
+        => _scrollViewer.SetScrollOffsets(horizontalOffset, verticalOffset);
+
+    private void OnItemsChanged(ItemsChange _)
+    {
+        InvalidateItemBindings();
+    }
+
+    private void OnScrollViewerChanged()
+    {
+        if (_hasLastMousePosition && TryGetItemIndexAtCore(_lastMousePosition, out int idx))
+        {
+            _hoverIndex = idx;
+        }
+        else
+        {
+            _hoverIndex = -1;
+        }
+
+        InvalidateVisual();
+    }
+
+    private void OnBeforeItemRender(IGraphicsContext context, int i, Rect itemRect)
+    {
+        if (ShowRowHover && i == _hoverIndex && IsEffectivelyEnabled)
+        {
+            var hoverBg = Theme.Palette.ControlBackground.Lerp(Theme.Palette.Accent, 0.10);
+            context.FillRectangle(itemRect, hoverBg);
+        }
+    }
+
+    private IDataTemplate CreateDefaultItemTemplate()
+        => new DelegateTemplate<object?>(
+            build: _ => new TextBlock(),
+            bind: (view, _, index, _) =>
+            {
+                if (view is not TextBlock label)
+                {
+                    return;
+                }
+
+                label.Text = ItemsSource.GetText(index);
+                label.Margin = ItemPadding;
+            });
+
+    private bool TryGetItemIndexAtCore(Point position, out int index)
+    {
+        index = -1;
+
+        int count = ItemsSource.Count;
+        if (count <= 0)
+        {
+            return false;
+        }
+
+        // Unlike ListBox/NavigationList, no scrollbar-hit guard here: ItemsControl only uses this
+        // for hover highlighting (no click/selection), so a hover landing under the scrollbar is harmless.
+        return TryMapPointToItemIndex(position, _presenter, out index);
+    }
+
+    private double ResolveItemHeight()
+    {
+        if (!double.IsNaN(ItemHeight) && ItemHeight > 0)
+        {
+            return ItemHeight;
+        }
+
+        return Math.Max(18, Theme.Metrics.BaseControlHeight - 2);
+    }
+
+    protected override void OnDispose()
+    {
+        _itemsSource.Changed -= OnItemsChanged;
+        _presenter.OffsetCorrectionRequested -= OnPresenterOffsetCorrectionRequested;
+        if (_presenter is IDisposable dp)
+        {
+            dp.Dispose();
+        }
+
+        base.OnDispose();
+    }
+
+    /// <summary>
+    /// Returns the current presenter when it is already of the requested kind, installing a new one
+    /// otherwise. Reuse is what lets a presenter option change at runtime without the swap dropping
+    /// measured heights and jumping the scroll position.
+    /// </summary>
+    internal TPresenter EnsurePresenter<TPresenter>() where TPresenter : class, IItemsPresenter, new()
+    {
+        if (_presenter is TPresenter existing)
+        {
+            return existing;
+        }
+
+        var created = new TPresenter();
+        SetPresenter(created);
+        return created;
+    }
+
+    internal void SetPresenter(IItemsPresenter presenter)
+    {
+        double oldX = _scrollViewer.HorizontalOffset;
+        double oldY = _scrollViewer.VerticalOffset;
+
+        _presenter.OffsetCorrectionRequested -= OnPresenterOffsetCorrectionRequested;
+        if (_presenter is IDisposable d)
+        {
+            d.Dispose();
+        }
+
+        InitializePresenter(presenter);
+
+        _presenter = presenter;
+        _presenter.ItemPadding = ItemPadding;
+        _scrollViewer.Content = (UIElement)_presenter;
+        _scrollViewer.HorizontalScroll = ScrollMode.Disabled;
+        _scrollViewer.VerticalScroll = presenter is StackItemsPresenter
+            ? ScrollMode.Disabled
+            : ScrollMode.Auto;
+        _scrollViewer.SetScrollOffsets(oldX, oldY);
+
+        _hoverIndex = -1;
+        InvalidateMeasure();
+        InvalidateVisual();
+    }
+
+    private IItemsPresenter CreateDefaultPresenter()
+    {
+        var p = new FixedHeightItemsPresenter();
+        InitializePresenter(p);
+        return p;
+    }
+
+    private void InitializePresenter(IItemsPresenter presenter)
+    {
+        presenter.ItemsSource = _itemsSource;
+        presenter.ItemTemplate = WrapItemTemplate(_itemTemplate);
+        presenter.BeforeItemRender = OnBeforeItemRender;
+        presenter.ItemPadding = ItemPadding;
+        presenter.ItemBindingGeneration = ItemBindingGeneration;
+        presenter.ItemHeightHint = ResolveItemHeight();
+        presenter.OffsetCorrectionRequested += OnPresenterOffsetCorrectionRequested;
+    }
+
+    private void OnPresenterOffsetCorrectionRequested(Point offset)
+    {
+        _scrollViewer.SetScrollOffsets(_scrollViewer.HorizontalOffset, offset.Y);
+    }
+}

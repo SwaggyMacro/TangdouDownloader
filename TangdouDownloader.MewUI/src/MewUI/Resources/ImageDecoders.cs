@@ -1,0 +1,244 @@
+namespace Aprillz.MewUI.Resources;
+
+/// <summary>
+/// Maintains a process-wide registry of image decoders used by <see cref="ImageSource"/>.
+/// </summary>
+public static class ImageDecoders
+{
+    private const int DEFAULT_PRIORITY = 0;
+    private const int FALLBACK_PRIORITY = -1000;
+
+    /// <summary>
+    /// Maximum allowed width or height, in pixels, for a decoded image. Guards against
+    /// decompression-bomb inputs that declare implausibly large dimensions.
+    /// </summary>
+    internal const int MAX_IMAGE_DIMENSION = 32768;
+
+    /// <summary>
+    /// Maximum allowed total pixel count (width * height) for a decoded image.
+    /// </summary>
+    internal const long MAX_IMAGE_PIXEL_COUNT = 64L * 1024 * 1024;
+
+    private static long _nextOrder;
+    private static readonly object _lock = new();
+    private static readonly List<Registration> _decoders = new();
+
+    static ImageDecoders()
+    {
+        Register(new BmpDecoder());
+        Register(new PngDecoder());
+        Register(new JpegDecoder());
+        Register(new IconDecoder());
+    }
+
+    private readonly record struct Registration(IImageDecoder Decoder, int Priority, long Order);
+
+    /// <summary>
+    /// Registers a decoder. Decoders are queried in registration order, with the most recently registered
+    /// non-fallback decoders checked first. If multiple decoders report <see cref="IImageDecoder.CanDecode"/>
+    /// for the same input, the first match wins.
+    /// </summary>
+    public static void Register(IImageDecoder decoder) => RegisterCore(decoder, DEFAULT_PRIORITY);
+
+    /// <summary>
+    /// Registers a fallback decoder. Fallback decoders are only tried after all regular decoders.
+    /// Use this for "try anything" decoders that might match ambiguous inputs.
+    /// </summary>
+    public static void RegisterFallback(IImageDecoder decoder) => RegisterCore(decoder, FALLBACK_PRIORITY);
+
+    private static void RegisterCore(IImageDecoder decoder, int priority)
+    {
+        ArgumentNullException.ThrowIfNull(decoder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(decoder.Id);
+
+        lock (_lock)
+        {
+            // Remove any existing decoder with the same Id (treat Id as the uniqueness key).
+            for (int i = _decoders.Count - 1; i >= 0; i--)
+            {
+                if (string.Equals(_decoders[i].Decoder.Id, decoder.Id, StringComparison.OrdinalIgnoreCase))
+                {
+                    _decoders.RemoveAt(i);
+                }
+            }
+
+            long order = Interlocked.Increment(ref _nextOrder);
+            _decoders.Add(new Registration(decoder, priority, order));
+            _decoders.Sort(static (a, b) =>
+            {
+                int cmp = b.Priority.CompareTo(a.Priority);
+                if (cmp != 0)
+                {
+                    return cmp;
+                }
+
+                // Later registrations should win ties.
+                return b.Order.CompareTo(a.Order);
+            });
+        }
+    }
+
+    /// <summary>
+    /// Attempts to decode an encoded image span into a <see cref="Bgra32PixelBuffer"/>.
+    /// </summary>
+    /// <param name="encoded">Encoded image bytes.</param>
+    /// <param name="bitmap">Decoded bitmap on success.</param>
+    /// <returns><see langword="true"/> if a decoder matched and decoding succeeded; otherwise, <see langword="false"/>.</returns>
+    public static bool TryDecode(ReadOnlySpan<byte> encoded, out Bgra32PixelBuffer bitmap)
+    {
+        IImageDecoder? decoder = null;
+        lock (_lock)
+        {
+            for (int i = 0; i < _decoders.Count; i++)
+            {
+                var d = _decoders[i].Decoder;
+                if (d.CanDecode(encoded))
+                {
+                    decoder = d;
+                    break;
+                }
+            }
+        }
+
+        if (decoder == null)
+        {
+            DiagLog.Write("ImageDecoders: No decoder matched input.");
+            bitmap = default;
+            return false;
+        }
+
+        var ok = decoder.TryDecode(encoded, out bitmap);
+        if (!ok)
+        {
+            DiagLog.Write($"ImageDecoders: Decode failed for '{decoder.Id}' (length={encoded.Length}).");
+        }
+
+        return ok;
+    }
+
+    /// <summary>
+    /// Attempts to decode an encoded image byte array into a <see cref="Bgra32PixelBuffer"/>. Use the
+    /// <see cref="TryDecode(byte[], out Bgra32PixelBuffer, out ImageOrientation)"/> overload when the
+    /// source orientation is also needed.
+    /// </summary>
+    public static bool TryDecode(byte[] encoded, out Bgra32PixelBuffer bitmap)
+        => TryDecode(encoded, out bitmap, out _);
+
+    /// <summary>
+    /// Attempts to decode an encoded image byte array into pixels plus the orientation parsed from its
+    /// metadata. Uses the same fast byte[] pixel path as <see cref="TryDecode(byte[], out Bgra32PixelBuffer)"/>;
+    /// orientation comes from <see cref="IImageDecoder.ReadOrientation"/> (a cheap, copy-free metadata scan)
+    /// and is <see cref="ImageOrientation.Identity"/> for formats without orientation metadata.
+    /// </summary>
+    public static bool TryDecode(byte[] encoded, out Bgra32PixelBuffer bitmap, out ImageOrientation orientation)
+    {
+        ArgumentNullException.ThrowIfNull(encoded);
+        orientation = ImageOrientation.Identity;
+
+        IImageDecoder? decoder = FindDecoder(encoded);
+        if (decoder == null)
+        {
+            DiagLog.Write("ImageDecoders: No decoder matched input.");
+            bitmap = default;
+            return false;
+        }
+
+        bool ok = decoder is IByteArrayImageDecoder fast
+            ? fast.TryDecode(encoded, out bitmap)
+            : decoder.TryDecode(encoded, out bitmap);
+        if (!ok)
+        {
+            DiagLog.Write($"ImageDecoders: Decode failed for '{decoder.Id}' (length={encoded.Length}).");
+            return false;
+        }
+
+        orientation = decoder.ReadOrientation(encoded);
+        return true;
+    }
+
+    private static IImageDecoder? FindDecoder(ReadOnlySpan<byte> encoded)
+    {
+        lock (_lock)
+        {
+            for (int i = 0; i < _decoders.Count; i++)
+            {
+                if (_decoders[i].Decoder.CanDecode(encoded))
+                {
+                    return _decoders[i].Decoder;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Attempts to identify the input format by probing registered decoders.
+    /// This is intended for diagnostics only.
+    /// </summary>
+    public static string? DetectFormatId(ReadOnlySpan<byte> encoded)
+    {
+        lock (_lock)
+        {
+            for (int i = 0; i < _decoders.Count; i++)
+            {
+                var d = _decoders[i].Decoder;
+                if (d.CanDecode(encoded))
+                {
+                    return d.Id;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    internal static bool TryReadMetadata(ReadOnlySpan<byte> encoded, out ImageMetadata metadata)
+    {
+        var decoder = FindDecoder(encoded);
+        if (decoder is IImageMetadataDecoder metadataDecoder
+            && metadataDecoder.TryReadMetadata(encoded, out metadata))
+        {
+            return true;
+        }
+
+        metadata = default;
+        return false;
+    }
+
+    internal static bool TryDecode(
+        byte[] encoded,
+        int targetPixelWidth,
+        int targetPixelHeight,
+        out Bgra32PixelBuffer bitmap,
+        out ImageOrientation orientation)
+    {
+        ArgumentNullException.ThrowIfNull(encoded);
+        orientation = ImageOrientation.Identity;
+
+        var decoder = FindDecoder(encoded);
+        if (decoder == null)
+        {
+            bitmap = default;
+            return false;
+        }
+
+        bool decoded = decoder is ITargetSizeImageDecoder targetDecoder
+            ? targetDecoder.TryDecode(encoded, targetPixelWidth, targetPixelHeight, out bitmap)
+            : decoder is IByteArrayImageDecoder fast
+                ? fast.TryDecode(encoded, out bitmap)
+                : decoder.TryDecode(encoded, out bitmap);
+        if (!decoded)
+        {
+            bitmap = default;
+            return false;
+        }
+
+        if (bitmap.WidthPx > targetPixelWidth || bitmap.HeightPx > targetPixelHeight)
+        {
+            bitmap = Bgra32ImageResampler.FitWithin(bitmap, targetPixelWidth, targetPixelHeight);
+        }
+        orientation = decoder.ReadOrientation(encoded);
+        return true;
+    }
+}
