@@ -91,10 +91,12 @@
                         <Grid Grid.Row="2" ColumnDefinitions="*,Auto" ColumnSpacing="12">
                             <WrapPanel ItemHeight="34" VerticalAlignment="Center">
                                 <StackPanel Orientation="Horizontal" Spacing="7" Margin="0,0,16,0">
-                                    <TextBlock Text="清晰度" Foreground="{DynamicResource SemiColorText2}"
+                                    <TextBlock Text="清晰度（自动选最高）" Foreground="{DynamicResource SemiColorText2}"
                                                VerticalAlignment="Center" />
                                     <ComboBox ItemsSource="{Binding Qualities}"
-                                              SelectedItem="{Binding SelectedQuality}" Width="92" />
+                                              SelectedItem="{Binding SelectedQuality}" Width="92"
+                                              IsEnabled="False"
+                                              ToolTip.Tip="可用清晰度只有解析后才知道，程序会自动选择最高可用档" />
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" Spacing="7" Margin="0,0,16,0">
                                     <TextBlock Text="同时下载数" Foreground="{DynamicResource SemiColorText2}"

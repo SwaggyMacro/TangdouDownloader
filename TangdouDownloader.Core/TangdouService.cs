@@ -7,7 +7,7 @@ namespace TangdouDownloader.Core;
 
 public static class DownloaderUtils
 {
-    private static readonly Regex VidPattern = new(@"(?:^|[?&/])vid[=/](\d+)|\b(\d{8,})\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex VidPattern = new(@"(?:^|[?&/])vid[=/](\d+)|/play/(\d{6,})|\b(\d{13,14})\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public static IReadOnlyList<string> ExtractVids(string? input)
     {
@@ -17,7 +17,13 @@ public static class DownloaderUtils
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (Match match in VidPattern.Matches(input))
         {
-            var vid = match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Value;
+            // Share texts carry other numeric fields (share_uid, timestamps, team ids)
+            // that are 8-10 digits long; bare numbers are only treated as vids in the
+            // 13-14 digit range real vids live in. The explicit vid= and /play/ forms
+            // keep accepting any length.
+            var vid = match.Groups[1].Success ? match.Groups[1].Value
+                : match.Groups[2].Success ? match.Groups[2].Value
+                : match.Groups[3].Value;
             if (seen.Add(vid)) result.Add(vid);
         }
 

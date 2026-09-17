@@ -33,7 +33,8 @@ public sealed class DownloadItem : ReactiveObject
     public required string Title { get => _title; set => SetField(ref _title, value); }
     public required string Url { get => _url; set => SetField(ref _url, value); }
     public string OriginalUrl { get; init; } = string.Empty;
-    public required string Quality { get; init; }
+    public required string Quality { get => _quality; set => SetField(ref _quality, value); }
+    private string _quality = string.Empty;
     public bool IsSelected { get => _isSelected; set => SetField(ref _isSelected, value); }
     public int Progress { get => _progress; set { if (SetField(ref _progress, value)) OnPropertyChanged(nameof(ProgressLabel)); } }
     public long BytesReceived { get => _bytesReceived; set { if (SetField(ref _bytesReceived, value)) OnPropertyChanged(nameof(TransferLabel)); } }
@@ -469,6 +470,9 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
                 item.Title = info.Title;
                 item.Url = url;
                 item.CoverUrl = info.CoverUrl;
+                // The requested quality is only a wish; report the best one the video
+                // actually offers so the row and history show what is really downloaded.
+                item.Quality = info.BestQualityLabel();
                 item.Status = "排队中";
                 // If the user pressed "start all" while this row was still parsing, it was
                 // missing from that batch's snapshot; start it now so it cannot linger in
