@@ -133,6 +133,10 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
     private readonly Dictionary<DownloadItem, CancellationTokenSource> _activeDownloads = [];
     private readonly object _activeLock = new();
     private readonly CancellationTokenSource _lifetime = new();
+    // Set when the user presses "start all" while rows are still parsing. Those rows
+    // were excluded from the batch snapshot, so they must auto-start once resolved;
+    // otherwise they stay stuck in "排队中" forever. UI-thread only.
+    private bool _startAllRequested;
     private static readonly HttpClient CoverClient = new();
     private string _inputText = string.Empty;
     private string _selectedQuality = "1080P";
@@ -466,6 +470,11 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
                 item.Url = url;
                 item.CoverUrl = info.CoverUrl;
                 item.Status = "排队中";
+                // If the user pressed "start all" while this row was still parsing, it was
+                // missing from that batch's snapshot; start it now so it cannot linger in
+                // "排队中" forever. Fire-and-forget matches ResumeItemAsync's pattern.
+                if (_startAllRequested)
+                    _ = Task.Run(() => DownloadItemAsync(item, DownloadDirectory, SelectedDownloadThreads));
             });
             if (item.Status != "已取消" && !string.IsNullOrWhiteSpace(info.CoverUrl))
                 await LoadCoverAsync(item, info.CoverUrl, _lifetime.Token);
@@ -497,14 +506,27 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
     {
         // Snapshot UI-owned state before dispatching the network and file work.
         var queue = Items.Where(item => item.Status is "排队中" or "已暂停").ToList();
+        var parsing = Items.Any(item => item.Status == "解析中");
         var directory = DownloadDirectory;
         var concurrency = SelectedConcurrency;
         var downloadThreads = SelectedDownloadThreads;
         if (queue.Count == 0)
         {
-            ShowToast("没有可开始的任务");
+            // Rows added while parsing are not in the snapshot above; mark that they
+            // should start on their own as soon as their resolve finishes.
+            if (parsing)
+            {
+                _startAllRequested = true;
+                ShowToast("解析完成后将自动开始下载");
+            }
+            else
+            {
+                ShowToast("没有可开始的任务");
+            }
             return;
         }
+        // A pending parse may finish after this batch was snapshotted; let it join.
+        _startAllRequested = parsing;
         ShowToast($"开始下载 {queue.Count} 项任务，每项 {downloadThreads} 线程");
         _ = Task.Run(() => StartAllAsync(queue, directory, concurrency, downloadThreads));
     }
@@ -522,6 +544,15 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
                 try { await DownloadItemAsync(item, directory, downloadThreads); }
                 finally { gate.Release(); }
             }));
+            // The batch is drained. If nothing else is active (late joiners from the
+            // queue race), the "start all" intent has been fully served.
+            await OnUiAsync(() =>
+            {
+                bool stillActive;
+                lock (_activeLock) stillActive = _activeDownloads.Count > 0;
+                if (!stillActive && !Items.Any(item => item.Status is "解析中" or "下载中"))
+                    _startAllRequested = false;
+            });
             await OnUiAsync(() =>
             {
                 OnPropertyChanged(nameof(TaskSummary));

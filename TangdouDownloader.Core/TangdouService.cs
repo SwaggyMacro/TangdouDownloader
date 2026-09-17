@@ -185,15 +185,25 @@ public sealed class TangdouVideoService : IVideoResolver, IDisposable
             {
                 using var request = CreateRequest(HttpMethod.Head, candidate);
                 using var response = await _client.SendAsync(request, cancellationToken);
-                // The original downloader treats every response except a concrete 404 as an
-                // available quality. Some CDN nodes reject HEAD with a non-2xx status but
-                // still serve the same URL to a GET request.
-                if (response.StatusCode != HttpStatusCode.NotFound) lock (result) result[resolution] = candidate;
+                // Only a 200 with a real video body counts as an available quality.
+                // Some CDN nodes answer HEAD to a missing quality with a plain 404 page
+                // or a fixed-size decoy video, which must not be offered for download.
+                if (response.StatusCode != HttpStatusCode.OK) return;
+                var contentType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
+                if (!contentType.Contains("video", StringComparison.OrdinalIgnoreCase)) return;
+                var length = response.Content.Headers.ContentLength ?? -1;
+                if (length <= 0 || length == DecoyFileSize) return;
+                lock (result) result[resolution] = candidate;
             }
             catch (HttpRequestException) { }
         }));
         return result;
     }
+
+    // The CDN serves this exact file (video/mp4, ~395 KB) whenever a request lacks a
+    // referer or asks for a URL the host refuses; downloads that skip the check end
+    // up saving this decoy instead of the requested video.
+    private const long DecoyFileSize = 404916;
 
     public static HttpRequestMessage CreateRequest(HttpMethod method, string url)
     {
@@ -201,8 +211,12 @@ public sealed class TangdouVideoService : IVideoResolver, IDisposable
         request.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3");
         request.Headers.TryAddWithoutValidation("Accept-Language", "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7,zh-CN;q=0.6");
         request.Headers.TryAddWithoutValidation("Connection", "keep-alive");
-        request.Headers.TryAddWithoutValidation("Referer", "https://www.tangdoucdn.com/");
-        request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36");
+        // The desktop UA + tangdoucdn referer pair gets 403 from the CDN hosts returned
+        // by the play API. The mobile H5 pair (iPhone UA + m.tangdou.com referer) is
+        // accepted by every host we have seen, and it is what the H5 player itself uses.
+        // Requests without a referer are silently served a decoy file instead of 403.
+        request.Headers.TryAddWithoutValidation("Referer", "https://m.tangdou.com/");
+        request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1");
         return request;
     }
 
