@@ -37,6 +37,12 @@
                         <TextBlock Text="⇩" FontSize="15" /><TextBlock Text="下载任务" />
                     </StackPanel>
                 </Button>
+                <Button Classes="nav-button" Classes.selected="{Binding IsSearchSelected}"
+                        Command="{Binding ShowSearchCommand}">
+                    <StackPanel Orientation="Horizontal" Spacing="7">
+                        <TextBlock Text="⌕" FontSize="15" /><TextBlock Text="在线搜索" />
+                    </StackPanel>
+                </Button>
                 <Button Classes="nav-button" Classes.selected="{Binding IsHistorySelected}"
                         Command="{Binding ShowHistoryCommand}">
                     <StackPanel Orientation="Horizontal" Spacing="7">
@@ -401,6 +407,144 @@
                         </Grid>
                     </Border>
                 </Grid>
+            </Grid>
+            <Grid Margin="20" RowDefinitions="Auto,*,Auto" RowSpacing="16" IsVisible="{Binding IsSearchPage}">
+                <Border Grid.Row="0" Classes="panel" Padding="16">
+                    <Grid RowDefinitions="Auto,Auto" RowSpacing="12">
+                        <Grid ColumnDefinitions="*,Auto" Grid.Row="0">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Text="⌕" Foreground="{DynamicResource SemiColorPrimary}" FontSize="16"
+                                           VerticalAlignment="Center" />
+                                <TextBlock Text="搜索糖豆视频" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <TextBlock Text="输入歌名或舞名，直接下载，不用再开糖豆 App" Foreground="{DynamicResource SemiColorText2}"
+                                           FontSize="11" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Grid>
+                        <Grid Grid.Row="1" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                            <TextBox Text="{Binding SearchInput, UpdateSourceTrigger=PropertyChanged}"
+                                     PlaceholderText="例如：九九女儿红、映山红、可可托海的牧羊人..."
+                                     KeyDown="OnSearchBoxKeyDown" />
+                            <Button Grid.Column="1" Classes="Primary icon-button" Theme="{DynamicResource SolidButton}"
+                                    Command="{Binding SearchCommand}" MinWidth="88">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock Text="⌕" FontSize="14" /><TextBlock Text="搜索" />
+                                </StackPanel>
+                            </Button>
+                            <Button Grid.Column="2" Classes="icon-button" Command="{Binding SearchSelectAllCommand}"
+                                    ToolTip.Tip="全选本页结果">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock Text="▣" Foreground="{DynamicResource SemiColorPrimary}" /><TextBlock Text="全选" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                    </Grid>
+                </Border>
+                <Border Grid.Row="1" Classes="panel" MinHeight="0">
+                    <Grid RowDefinitions="Auto,*,Auto">
+                        <Grid Margin="16,14" ColumnDefinitions="*,Auto">
+                            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                <TextBlock Text="☰ 搜索结果" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding SearchSummary}" Foreground="{DynamicResource SemiColorText2}"
+                                           FontSize="11" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding SearchHint}" Foreground="{DynamicResource SemiColorWarning}"
+                                           FontSize="11" VerticalAlignment="Center" IsVisible="{Binding HasSearchHint}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="7">
+                                <Button Classes="icon-button" Theme="{DynamicResource BorderlessIconButton}"
+                                        Command="{Binding SearchPreviousPageCommand}" IsEnabled="{Binding CanGoPreviousSearchPage}"
+                                        ToolTip.Tip="上一页">
+                                    <TextBlock Text="‹" FontSize="16" />
+                                </Button>
+                                <Button Classes="icon-button" Theme="{DynamicResource BorderlessIconButton}"
+                                        Command="{Binding SearchNextPageCommand}"
+                                        ToolTip.Tip="下一页">
+                                    <TextBlock Text="›" FontSize="16" />
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+                        <DataGrid Grid.Row="1" ItemsSource="{Binding SearchItems}" AutoGenerateColumns="False"
+                                  IsReadOnly="True" Focusable="False" SelectionMode="Single"
+                                  CanUserResizeColumns="False" CanUserSortColumns="False" CanUserReorderColumns="False"
+                                  BeginningEdit="OnTaskGridBeginningEdit" MinHeight="0" BorderThickness="0,1,0,1"
+                                  BorderBrush="{DynamicResource SemiColorBorder}"
+                                  ScrollViewer.VerticalScrollBarVisibility="Auto">
+                            <DataGrid.Columns>
+                                <DataGridTemplateColumn Width="48">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <CheckBox IsChecked="{Binding IsSelected}" Focusable="False"
+                                                      IsTabStop="False" HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center" />
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="视频" Width="3*">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                                <Border Width="84" Height="52"
+                                                        Background="{DynamicResource SemiColorFill0}"
+                                                        BorderBrush="{DynamicResource SemiColorBorder}"
+                                                        BorderThickness="1" CornerRadius="8" ClipToBounds="True">
+                                                    <Panel>
+                                                        <Image Source="{Binding CoverImage}" Stretch="UniformToFill"
+                                                               IsVisible="{Binding HasCoverImage}" />
+                                                        <TextBlock Text="▶" Foreground="{DynamicResource SemiColorPrimary}"
+                                                                   FontSize="18" HorizontalAlignment="Center"
+                                                                   VerticalAlignment="Center"
+                                                                   IsVisible="{Binding ShowCoverPlaceholder}" />
+                                                    </Panel>
+                                                </Border>
+                                                <StackPanel Spacing="3" VerticalAlignment="Center" MinWidth="140">
+                                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold"
+                                                               TextTrimming="CharacterEllipsis" MaxWidth="360" />
+                                                    <StackPanel Orientation="Horizontal" Spacing="3">
+                                                        <TextBlock Text="VID："
+                                                                   Foreground="{DynamicResource SemiColorText2}"
+                                                                   FontSize="11" />
+                                                        <TextBlock Text="{Binding Vid}"
+                                                                   Foreground="{DynamicResource SemiColorText2}"
+                                                                   FontFamily="Consolas" FontSize="11" />
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="作者" Binding="{Binding Author}" Width="110" />
+                                <DataGridTextColumn Header="时长" Binding="{Binding DurationLabel}" Width="70" />
+                                <DataGridTextColumn Header="播放量" Binding="{Binding HitsLabel}" Width="90" />
+                                <DataGridTemplateColumn Header="类型" Width="70">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Border Classes="quality-tag" CornerRadius="4" Padding="7,2" Height="24"
+                                                    VerticalAlignment="Center" HorizontalAlignment="Center"
+                                                    IsVisible="{Binding HasTeach}">
+                                                <TextBlock Text="教学" Foreground="{DynamicResource SemiColorPrimary}"
+                                                           FontSize="11" VerticalAlignment="Center" />
+                                            </Border>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <Grid Grid.Row="2" Margin="16,11" ColumnDefinitions="*,Auto">
+                            <TextBlock Text="勾选要下载的视频后点击右下角按钮，自动选择最高可用清晰度"
+                                       Foreground="{DynamicResource SemiColorText2}" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                <TextBlock Text="{Binding SearchSelectedLabel}"
+                                           Foreground="{DynamicResource SemiColorText2}" VerticalAlignment="Center" />
+                                <Button Classes="Primary icon-button" Theme="{DynamicResource SolidButton}"
+                                        Command="{Binding DownloadSearchSelectedCommand}">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Text="⇩" FontSize="14" /><TextBlock Text="下载选中" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                </Border>
             </Grid>
             <Border Margin="20" Classes="panel" Padding="24" IsVisible="{Binding IsHistoryPage}">
                 <Grid RowDefinitions="Auto,*" RowSpacing="18">

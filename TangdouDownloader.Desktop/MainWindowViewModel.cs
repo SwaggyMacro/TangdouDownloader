@@ -127,8 +127,10 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
 {
     private const string DownloadsPage = "downloads";
     private const string HistoryPage = "history";
+    private const string SearchPage = "search";
     private readonly IVideoResolver _resolver;
     private readonly IVideoDownloader _downloader;
+    private readonly IVideoSearchService _searchService;
     private readonly IWorkspaceStateStore _stateStore;
     private IWorkspacePlatform _platform;
     private readonly Dictionary<DownloadItem, CancellationTokenSource> _activeDownloads = [];
@@ -152,16 +154,23 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
     private bool _isToastVisible;
     private int _toastGeneration;
     private bool _isDarkTheme = true;
+    private string _searchKeyword = string.Empty;
+    private string _searchInput = string.Empty;
+    private int _searchPageNumber = 1;
+    private bool _isSearching;
+    private string _searchHint = string.Empty;
 
     public MainWindowViewModel(
         IVideoResolver? resolver = null,
         IVideoDownloader? downloader = null,
         string? dataDirectory = null,
         IWorkspaceStateStore? stateStore = null,
-        IWorkspacePlatform? platform = null)
+        IWorkspacePlatform? platform = null,
+        IVideoSearchService? searchService = null)
     {
         _resolver = resolver ?? new TangdouVideoService();
         _downloader = downloader ?? new VideoDownloadService();
+        _searchService = searchService ?? new TangdouSearchService();
         _stateStore = stateStore ?? new JsonWorkspaceStateStore(dataDirectory);
         _platform = platform ?? new DefaultWorkspacePlatform();
         LoadState();
@@ -172,6 +181,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         // ReactiveUI does not raise CanExecuteChanged from a worker scheduler.
         ShowDownloadsCommand = ReactiveCommand.Create(() => { Page = DownloadsPage; });
         ShowHistoryCommand = ReactiveCommand.Create(() => { Page = HistoryPage; });
+        ShowSearchCommand = ReactiveCommand.Create(() => { Page = SearchPage; });
         OpenGithubCommand = ReactiveCommand.Create(() => _platform.OpenPath("https://github.com/SwaggyMacro/TangdouDownloader"));
         PasteClipboardCommand = ReactiveCommand.CreateFromTask(PasteClipboardAsync);
         ClearInputCommand = ReactiveCommand.Create(() => { InputText = string.Empty; });
@@ -180,6 +190,14 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         DeleteSelectedCommand = ReactiveCommand.CreateFromTask(DeleteSelectedAsync);
         PauseAllCommand = ReactiveCommand.CreateFromTask(PauseAllAsync);
         StartAllCommand = ReactiveCommand.Create(StartAllInBackground);
+        SearchCommand = ReactiveCommand.CreateFromTask(() => SearchAsync(1));
+        SearchNextPageCommand = ReactiveCommand.CreateFromTask(() => SearchAsync(_searchPageNumber + 1));
+        SearchPreviousPageCommand = ReactiveCommand.CreateFromTask(() => SearchAsync(_searchPageNumber - 1));
+        SearchSelectAllCommand = ReactiveCommand.Create(() =>
+        {
+            foreach (var item in SearchItems) item.IsSelected = true;
+        });
+        DownloadSearchSelectedCommand = ReactiveCommand.CreateFromTask(DownloadSearchSelectedAsync);
         FilterDownloadingCommand = ReactiveCommand.Create(() => SetFilter("下载中"));
         FilterCompletedCommand = ReactiveCommand.Create(() => SetFilter("已完成"));
         FilterQueuedCommand = ReactiveCommand.Create(() => SetFilter("排队中"));
@@ -200,6 +218,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
 
         ObserveCommandErrors(ShowDownloadsCommand, "切换页面失败");
         ObserveCommandErrors(ShowHistoryCommand, "切换页面失败");
+        ObserveCommandErrors(ShowSearchCommand, "切换页面失败");
         ObserveCommandErrors(FilterDownloadingCommand, "筛选任务失败");
         ObserveCommandErrors(FilterCompletedCommand, "筛选任务失败");
         ObserveCommandErrors(FilterQueuedCommand, "筛选任务失败");
@@ -209,6 +228,10 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         ObserveCommandErrors(ResolveCommand, "解析任务失败");
         ObserveCommandErrors(RetryItemCommand, "重试任务失败");
         ObserveCommandErrors(CopyHistoryUrlCommand, "复制视频地址失败");
+        ObserveCommandErrors(SearchCommand, "搜索失败");
+        ObserveCommandErrors(SearchNextPageCommand, "搜索失败");
+        ObserveCommandErrors(SearchPreviousPageCommand, "搜索失败");
+        ObserveCommandErrors(DownloadSearchSelectedCommand, "加入下载失败");
     }
 
     public ObservableCollection<DownloadItem> Items { get; } = [];
@@ -226,6 +249,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         return statusMatches && MatchesSearch(item);
     }).ToList();
     public ObservableCollection<HistoryItem> HistoryItems { get; } = [];
+    public ObservableCollection<SearchItemViewModel> SearchItems { get; } = [];
     public IReadOnlyList<string> Qualities { get; } = ["1080P", "720P", "540P", "360P"];
     public IReadOnlyList<int> ConcurrencyOptions { get; } = [1, 2, 3, 4, 6, 8];
     public IReadOnlyList<int> DownloadThreadOptions { get; } = [1, 2, 4, 8, 16];
@@ -274,13 +298,34 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         }
     }
     public string SearchText { get => _searchText; set { if (SetField(ref _searchText, value)) Refresh(); } }
+    public string SearchInput
+    {
+        get => _searchInput;
+        set => SetField(ref _searchInput, value);
+    }
+    public string SearchKeyword { get => _searchKeyword; private set { if (SetField(ref _searchKeyword, value)) OnPropertyChanged(nameof(SearchSummary)); } }
+    public int SearchPageNumber { get => _searchPageNumber; private set { if (SetField(ref _searchPageNumber, value)) { OnPropertyChanged(nameof(SearchSummary)); OnPropertyChanged(nameof(CanGoPreviousSearchPage)); } } }
+    public bool IsSearching { get => _isSearching; private set => SetField(ref _isSearching, value); }
+    public string SearchHint
+    {
+        get => _searchHint;
+        private set { if (SetField(ref _searchHint, value)) OnPropertyChanged(nameof(HasSearchHint)); }
+    }
+    public bool HasSearchHint => !string.IsNullOrWhiteSpace(SearchHint);
+    public string SearchSummary => SearchItems.Count == 0
+        ? string.Empty
+        : $"「{SearchKeyword}」第 {SearchPageNumber} 页 · {SearchItems.Count} 条结果";
+    public bool CanGoPreviousSearchPage => SearchPageNumber > 1;
+    public string SearchSelectedLabel => $"已选 {SearchItems.Count(item => item.IsSelected)} 项";
     public string StatusMessage { get => _statusMessage; private set => SetField(ref _statusMessage, value); }
     public string ToastMessage { get => _toastMessage; private set => SetField(ref _toastMessage, value); }
     public bool IsToastVisible { get => _isToastVisible; private set => SetField(ref _isToastVisible, value); }
     public bool IsDownloadPage => Page == DownloadsPage;
     public bool IsHistoryPage => Page == HistoryPage;
+    public bool IsSearchPage => Page == SearchPage;
     public bool IsDownloadsSelected => IsDownloadPage;
     public bool IsHistorySelected => IsHistoryPage;
+    public bool IsSearchSelected => IsSearchPage;
     public bool IsAllFilterSelected => _filter == "全部";
     public bool IsDownloadingFilterSelected => _filter == "下载中";
     public bool IsCompletedFilterSelected => _filter == "已完成";
@@ -312,6 +357,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
 
     public ReactiveCommand<RxVoid, RxVoid> ShowDownloadsCommand { get; }
     public ReactiveCommand<RxVoid, RxVoid> ShowHistoryCommand { get; }
+    public ReactiveCommand<RxVoid, RxVoid> ShowSearchCommand { get; }
     public ReactiveCommand<RxVoid, RxVoid> OpenGithubCommand { get; }
     public ReactiveCommand<RxVoid, RxVoid> PasteClipboardCommand { get; }
     public ReactiveCommand<RxVoid, RxVoid> ClearInputCommand { get; }
@@ -320,6 +366,11 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
     public ReactiveCommand<RxVoid, RxVoid> DeleteSelectedCommand { get; }
     public ReactiveCommand<RxVoid, RxVoid> PauseAllCommand { get; }
     public ReactiveCommand<RxVoid, RxVoid> StartAllCommand { get; }
+    public ReactiveCommand<RxVoid, RxVoid> SearchCommand { get; }
+    public ReactiveCommand<RxVoid, RxVoid> SearchNextPageCommand { get; }
+    public ReactiveCommand<RxVoid, RxVoid> SearchPreviousPageCommand { get; }
+    public ReactiveCommand<RxVoid, RxVoid> SearchSelectAllCommand { get; }
+    public ReactiveCommand<RxVoid, RxVoid> DownloadSearchSelectedCommand { get; }
     public ReactiveCommand<RxVoid, RxVoid> FilterDownloadingCommand { get; }
     public ReactiveCommand<RxVoid, RxVoid> FilterCompletedCommand { get; }
     public ReactiveCommand<RxVoid, RxVoid> FilterQueuedCommand { get; }
@@ -355,8 +406,10 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
             if (!SetField(ref _page, value)) return;
             OnPropertyChanged(nameof(IsDownloadPage));
             OnPropertyChanged(nameof(IsHistoryPage));
+            OnPropertyChanged(nameof(IsSearchPage));
             OnPropertyChanged(nameof(IsDownloadsSelected));
             OnPropertyChanged(nameof(IsHistorySelected));
+            OnPropertyChanged(nameof(IsSearchSelected));
         }
     }
 
@@ -428,17 +481,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
             });
 
             if (workItems.Count == 0) return;
-
-            using var gate = new SemaphoreSlim(SelectedConcurrency);
-            var tasks = workItems.Select(item => ResolveItemAsync(item, gate));
-            await Task.WhenAll(tasks);
-            var failures = workItems.Count(item => item.Status == "解析失败");
-            await OnUiAsync(() =>
-            {
-                InputText = string.Empty;
-                ShowToast($"已加入 {workItems.Count - failures} 项，失败 {failures} 项，重复跳过 {duplicateCount} 项");
-                Refresh();
-            });
+            await ResolveWorkItemsAsync(workItems, duplicateCount, clearInputOnSuccess: true);
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
         {
@@ -448,6 +491,146 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         {
             await OnUiAsync(() => ShowToast($"解析任务失败: {DescribeFailure(exception)}"));
         }
+    }
+
+    // Shared tail of every "add rows and resolve them" flow (paste-input and search
+    // results alike): bounded parse, then a single summary toast.
+    private async Task ResolveWorkItemsAsync(List<DownloadItem> workItems, int duplicateCount, bool clearInputOnSuccess = false)
+    {
+        using var gate = new SemaphoreSlim(SelectedConcurrency);
+        var tasks = workItems.Select(item => ResolveItemAsync(item, gate));
+        await Task.WhenAll(tasks);
+        var failures = workItems.Count(item => item.Status == "解析失败");
+        await OnUiAsync(() =>
+        {
+            if (clearInputOnSuccess) InputText = string.Empty;
+            ShowToast($"已加入 {workItems.Count - failures} 项，失败 {failures} 项，重复跳过 {duplicateCount} 项");
+            Refresh();
+        });
+    }
+
+    private async Task SearchAsync(int page)
+    {
+        if (IsSearching) return;
+        var keyword = SearchInput.Trim();
+        if (page < 1 || (page == 1 && string.IsNullOrWhiteSpace(keyword)))
+        {
+            ShowToast("请输入要搜索的歌名或舞名");
+            return;
+        }
+        if (page > 1 && string.IsNullOrWhiteSpace(SearchKeyword))
+        {
+            ShowToast("请先搜索一次");
+            return;
+        }
+        // Paging keeps the last keyword; a fresh search always restarts from page 1.
+        if (page == 1) SearchKeyword = keyword;
+        else keyword = SearchKeyword;
+
+        try
+        {
+            IsSearching = true;
+            var result = await _searchService.SearchAsync(keyword, page, _lifetime.Token);
+            await OnUiAsync(() =>
+            {
+                SearchItems.Clear();
+                foreach (var entry in result.Items)
+                {
+                    var row = new SearchItemViewModel
+                    {
+                        Vid = entry.Vid,
+                        Title = entry.Title,
+                        Author = entry.Author,
+                        DurationSeconds = entry.DurationSeconds,
+                        Hits = entry.Hits,
+                        HasTeach = entry.HasTeach,
+                        CoverUrl = entry.CoverUrl,
+                    };
+                    row.PropertyChanged += (_, args) =>
+                    {
+                        if (args.PropertyName == nameof(SearchItemViewModel.IsSelected))
+                            OnPropertyChanged(nameof(SearchSelectedLabel));
+                    };
+                    SearchItems.Add(row);
+                }
+                SearchPageNumber = result.Page;
+                SearchHint = result.Items.Count == 0
+                    ? $"没有找到与「{keyword}」相关的视频，换个关键词试试"
+                    : result.Matched
+                        ? string.Empty
+                        : $"没有精确匹配「{keyword}」的结果，以下为热门推荐，建议换个关键词";
+                OnPropertyChanged(nameof(SearchSelectedLabel));
+            });
+            // Covers stream in after the list is interactive; a slow image must not
+            // keep the search results from showing.
+            _ = Task.WhenAll(result.Items.Select((entry, index) =>
+                SearchItems[index].LoadCoverAsync(CoverClient, _lifetime.Token)));
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            await OnUiAsync(() => ShowToast($"搜索失败: {DescribeFailure(exception)}"));
+        }
+        finally
+        {
+            await OnUiAsync(() => IsSearching = false);
+        }
+    }
+
+    private async Task DownloadSearchSelectedAsync()
+    {
+        var selected = SearchItems.Where(item => item.IsSelected).ToList();
+        if (selected.Count == 0)
+        {
+            ShowToast("请先勾选要下载的视频");
+            return;
+        }
+
+        List<DownloadItem> workItems = [];
+        var duplicateCount = 0;
+        await OnUiAsync(() =>
+        {
+            var existing = Items.Select(item => item.Vid).ToHashSet(StringComparer.Ordinal);
+            var pending = selected.Where(result => existing.Add(result.Vid)).ToList();
+            duplicateCount = selected.Count - pending.Count;
+            if (pending.Count == 0)
+            {
+                ShowToast($"未加入新任务，{duplicateCount} 项已在列表中");
+                return;
+            }
+
+            workItems = pending.Select((result, index) => new DownloadItem
+            {
+                Order = Items.Count + index + 1,
+                Vid = result.Vid,
+                Title = result.Title,
+                Url = string.Empty,
+                OriginalUrl = result.Vid,
+                Quality = SelectedQuality,
+                CoverUrl = result.CoverUrl,
+                Status = "解析中"
+            }).ToList();
+
+            foreach (var item in workItems) Items.Add(item);
+            ShowToast($"正在解析 {workItems.Count} 个视频...");
+        });
+        if (workItems.Count == 0) return;
+
+        await ResolveWorkItemsAsync(workItems, duplicateCount);
+        // Search rows already carry title and cover; show them without waiting for resolve.
+        await OnUiAsync(async () =>
+        {
+            foreach (var item in workItems)
+            {
+                if (item.Status == "已取消") continue;
+                if (!string.IsNullOrWhiteSpace(item.CoverUrl))
+                    _ = LoadCoverAsync(item, item.CoverUrl, _lifetime.Token);
+            }
+            Page = DownloadsPage;
+            await Task.CompletedTask;
+        });
     }
 
     private async Task ResolveItemAsync(DownloadItem item, SemaphoreSlim gate)
@@ -887,6 +1070,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
         OnPropertyChanged(nameof(TotalSpeedLabel));
         OnPropertyChanged(nameof(DiskFreeLabel));
         OnPropertyChanged(nameof(WorkerPoolLabel));
+        OnPropertyChanged(nameof(SearchSelectedLabel));
     }
 
     private void AddHistory(DownloadItem item)
@@ -1037,6 +1221,7 @@ public sealed class MainWindowViewModel : ReactiveObject, IDisposable
     {
         _lifetime.Cancel();
         if (_resolver is IDisposable disposable) disposable.Dispose();
+        if (_searchService is IDisposable searchDisposable) searchDisposable.Dispose();
         _lifetime.Dispose();
     }
 

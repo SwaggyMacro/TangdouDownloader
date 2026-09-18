@@ -1,7 +1,10 @@
 using System.Diagnostics;
+using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Input.Platform;
+using Avalonia.Interactivity;
 using Avalonia.Styling;
 using Ursa.Controls;
 using Avalonia.Platform.Storage;
@@ -23,6 +26,16 @@ public partial class MainWindow : UrsaWindow
     private void OnTaskGridBeginningEdit(object? sender, DataGridBeginningEditEventArgs e)
     {
         e.Cancel = true;
+    }
+
+    private void OnSearchBoxKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        if (DataContext is MainWindowViewModel { SearchCommand: ICommand command } && command.CanExecute(null))
+        {
+            command.Execute(null);
+            e.Handled = true;
+        }
     }
 
     private sealed class WindowWorkspacePlatform(MainWindow window) : IWorkspacePlatform
